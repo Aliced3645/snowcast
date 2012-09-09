@@ -6,4 +6,9 @@ snowcast_control <-> snowcast_server:
 	Hello <-> Welcome
 	SetStation <-> Announce
 
+server: for tcp and udp...How?
+Solution: 
+	1.Create a thread for listening connections...
+
+
 
