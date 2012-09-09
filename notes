@@ -1,0 +1,8 @@
+
+client: snowcast_listener snowcast_control
+server: snowcast_server
+
+snowcast_control <-> snowcast_server:
+	Hello <-> Welcome
+	SetStation <-> Announce
+
