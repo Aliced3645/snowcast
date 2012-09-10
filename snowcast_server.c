@@ -11,6 +11,7 @@
 #define DEBUG
 
 #define MAX_LENGTH 256
+static uint16_t station_nums = 20;
 
 struct listen_param{
 	int sockfd;	
@@ -21,12 +22,29 @@ struct control_message{
 	uint8_t command_type;
 	uint16_t content;
 };
+
+struct Welcome{
+	uint8_t replyType;
+	uint16_t numStations;
+};
+
+struct Announce{
+	uint8_t replyType;
+	uint8_t songnameSize;
+	char* sonename;
+};
+
+struct InvalidCommand{
+	uint8_t replyType;
+	uint8_t replyStringSize;
+	char* replyString;
+};
 #pragma pack(pop)
 
 void* listening_thread_func(void* args){
-	struct listen_param* lp = (struct isten_param*)args;
+	struct listen_param* lp = (struct listen_param*)args;
 	int server_sockfd = lp->sockfd;
-	printf("Server starts listening to connection...\n");
+	printf("Server starts listening to connection...(local socket ID: %d)\n",server_sockfd);
 	int rv;
 	if((rv = listen(server_sockfd, 0))  == -1){
 		close(server_sockfd);
@@ -49,8 +67,18 @@ void* listening_thread_func(void* args){
 	while( (msg_length = recv(client_sockfd, &msg, sizeof(struct control_message), 0)) > 0){
 		uint8_t msg_type = msg.command_type;
 		if(msg_type == (uint8_t)0){
+			uint16_t clnt_udpport_n = msg.content;
+			printf("Received a hello! Connector UDP Port: %d\n", clnt_udpport);
+			
 			//respond to the hello here		
-			printf("Received a hello!\n");
+			struct Welcome wl_msg = {(uint8_t)0, station_nums};
+			int bytes_sent = send(client_sockfd,(void*)&wl_msg, sizeof(struct Welcome), 0);
+			if(bytes_sent == -1){
+				printf("An error occured when sending a WELCOME message: %s\n", strerror(errno));
+			}
+			else if(bytes_sent != 3){
+				printf("NOT all contents of the Welcome message were sent..\n");
+			}
 		}
 		else if(msg_type == (uint8_t)1){
 		
@@ -86,7 +114,9 @@ int main(int argc, char** argv){
 		printf("Error in initializing socket: %s\n", strerror(errno));
 		exit(-1);
 	}	
-	
+#ifdef DEBUG
+	printf("Socket ID: %d\n", sockfd);
+#endif
 	if((rv = bind(sockfd, servinfo->ai_addr, servinfo->ai_addrlen)) < 0){
 		close(sockfd);
 		printf("Error in binding address to socket: %s\n", strerror(errno));
@@ -98,9 +128,11 @@ int main(int argc, char** argv){
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	pthread_attr_setstacksize(&attr, 20 * 1024 * 1024);
-	pthread_create(&listening_thread, &attr, listening_thread_func, 0);
+	struct listen_param* lp = (struct listen_param*)malloc(sizeof(struct listen_param));
+	lp->sockfd = sockfd;
+	pthread_create(&listening_thread, &attr, listening_thread_func, lp);
 	pthread_join(listening_thread, 0);
 	
-
+	free(lp);
 	return 0;
 }

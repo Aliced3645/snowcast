@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -7,6 +8,7 @@
 #include <string.h>
 #include <memory.h>
 #include <inttypes.h>
+#include <pthread.h>
 
 #define DEBUG
 
@@ -26,7 +28,7 @@ int send_hello(int sockfd, const char* clnt_udpport){
 	uint16_t clnt_udpport_h = (uint16_t)atoi(clnt_udpport);
 	uint16_t clnt_udpport_n = htons(clnt_udpport_h);
 #ifdef DEBUG
-	printf("Port: %d\n", clnt_udpport_n);
+	printf("Port: %d\n", clnt_udpport_n);	
 	printf("uint8 size: %d\n",sizeof(uint8_t));
 	printf("uint16 size: %d\n", sizeof(uint16_t));
 	//The machine might be 32-bit alligned...
@@ -41,7 +43,7 @@ int send_hello(int sockfd, const char* clnt_udpport){
 		printf("An error occured when sending a HELLO message: %s\n", strerror(errno));
 		return -1;
 	}
-	if(bytes_sent != 3){
+	else if(bytes_sent != 3){
 		printf("NOT all contents of the Hello mesasge is sent...\n");
 		return 0;
 	}
@@ -49,6 +51,85 @@ int send_hello(int sockfd, const char* clnt_udpport){
 	return 1;
 }
 
+void* send_message_loop(void* socket){
+	char input_msg[MAX_LENGTH];
+	int sockfd = (int)socket;
+	memset(input_msg, 0, MAX_LENGTH);
+	while(1){
+		fgets(input_msg,MAX_LENGTH,stdin);	
+		if((strlen(input_msg) > 0 ) && (input_msg[strlen(input_msg) - 1] == '\n'))
+				input_msg[strlen(input_msg) - 1] = '\0';
+		//decide what type of message
+		if(strncmp(input_msg,"set", 3) == 0){
+			//take the channel number
+			char channel_str[MAX_LENGTH];
+			memset(channel_str, 0, MAX_LENGTH);
+			strcpy(channel_str, input_msg + 4);
+			char* last = 0;
+			int channel_num = strtol(channel_str, &last, 10);
+			if((strlen(channel_str) == 0) || (last[0] != '\0')){
+				printf("Ambiguous input! Do you mean 'set %d'? type [y] to confim or other keys to input again!\n", channel_num);
+				memset(input_msg, 0, MAX_LENGTH);
+				fgets(input_msg, MAX_LENGTH, stdin);
+				if( (strlen(input_msg) == 1) && input_msg[0] == 'y'){
+					//to send setstation package here....
+					printf("Sending setstation request...\n");
+				}
+				else
+					continue;
+			}
+			//to send setstation package here..
+			printf("Sending setstation request...\n");
+			
+		}
+		else if((strncmp(input_msg, "exit", 4) == 0) || (strncmp(input_msg, "quit", 4) == 0)){
+				printf("Thanks for using Snowcast!\n");
+				exit(0);
+		}
+		else{
+			printf("Cannot recognize your message! Please type again...\n");
+		}
+
+		memset(input_msg, 0, MAX_LENGTH);
+		fflush(stdout);
+	}
+
+}
+
+void* recv_message_loop(void* socket){
+	int sockfd = (int)socket;
+	int rv;
+	while(1){
+		uint8_t* msg = (uint8_t*)malloc(MAX_LENGTH);
+		memset(msg,0,MAX_LENGTH);
+		//decide which type of msg is received
+		if( (rv = recv(sockfd, msg, MAX_LENGTH,0)) == -1){
+			printf("Error on receiving server messages : %s\n", strerror(errno));
+			exit(-1);
+		}
+		else if(rv == 0){
+			printf("Server closed the connection!\n");
+			exit(-1);
+		}
+		else{
+			//parse the message received..
+			uint8_t msg_type = msg[0];
+			if(msg_type == (uint8_t)0){
+				uint16_t* num_station_p = (uint16_t*)(msg + 1);
+				printf("Welcome! There are %d music stations in Snowcast! Using set <num> to set channel!\n", *num_station_p);
+			}
+			else if(msg_type == (uint8_t)1){
+			}
+			else if(msg_type == (uint8_t)2){
+			}
+			else{
+				printf("Unrecoginizable message from the server\n");
+			}
+		}
+		memset(msg,0, MAX_LENGTH);
+		fflush(stdout);
+	}
+}
 int main(int argc, char** argv){
 	
 	if(argc != 4){
@@ -88,48 +169,12 @@ int main(int argc, char** argv){
 
 	send_hello(sockfd, clnt_udpport);
 	//waiting for input
-	printf("Connected to the server! Please Input your set station command.\n \
-			Usage: set <station number>\n");
+	pthread_t sending_thread;
+	pthread_t recving_thread;
 
-	char input_msg[MAX_LENGTH];
-	memset(input_msg, 0, MAX_LENGTH);
-	while(1){
-		fgets(input_msg,MAX_LENGTH,stdin);	
-		if((strlen(input_msg) > 0 ) && (input_msg[strlen(input_msg) - 1] == '\n'))
-				input_msg[strlen(input_msg) - 1] = '\0';
-		//decide what type of message
-		if(strncmp(input_msg,"set", 3) == 0){
-			//take the channel number
-			char channel_str[MAX_LENGTH];
-			memset(channel_str, 0, MAX_LENGTH);
-			strcpy(channel_str, input_msg + 4);
-			char* last = 0;
-			int channel_num = strtol(channel_str, &last, 10);
-			if((strlen(channel_str) == 0) || (last[0] != '\0')){
-				printf("Ambiguous input! Do you mean 'set %d'? type [y] to confim or other keys to input again!\n", channel_num);
-				memset(input_msg, 0, MAX_LENGTH);
-				fgets(input_msg, MAX_LENGTH, stdin);
-				if( (strlen(input_msg) == 1) && input_msg[0] == 'y'){
-				//to send setstation package here....
-				printf("Sending setstation request...\n");
-				}
-				else
-					continue;
-			}
-			//to send setstation package here..
-			printf("Sending setstation request...\n");
-			
-		}
-		else if((strncmp(input_msg, "exit", 4) == 0) || (strncmp(input_msg, "quit", 4) == 0)){
-				printf("Thanks for using Snowcast!\n");
-				exit(0);
-		}
-		else{
-			printf("Cannot recognize your message! Please type again...\n");
-		}
-
-		memset(input_msg, 0, MAX_LENGTH);
-	}
-	
+	pthread_create(&sending_thread, NULL, send_message_loop, (void*)sockfd);
+	pthread_create(&recving_thread, NULL, recv_message_loop, (void*)sockfd);
+	pthread_join(sending_thread, 0);
+	pthread_join(recving_thread, 0);
 	return 0;
 }

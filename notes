@@ -9,6 +9,6 @@ snowcast_control <-> snowcast_server:
 server: for tcp and udp...How?
 Solution: 
 	1.Create a thread for listening connections...
-
+	2.For each song, these is one thread?
 
 
