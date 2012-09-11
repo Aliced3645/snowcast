@@ -12,3 +12,13 @@ Solution:
 	2.For each song, these is one thread?
 
 
+for asynchronization method...
+
+Select may contains a set of files with events,
+then needs to iterate from 0 to max file discriptor to handle each file.
+
+
+************************************
+The server should record the address of each client, and also their current channel
+
+

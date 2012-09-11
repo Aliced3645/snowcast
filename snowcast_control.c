@@ -75,8 +75,10 @@ void* send_message_loop(void* socket){
 					//to send setstation package here....
 					printf("Sending setstation request...\n");
 				}
-				else
+				else{
+					printf("Please input again your instruction here!\n");
 					continue;
+				}
 			}
 			//to send setstation package here..
 			printf("Sending setstation request...\n");

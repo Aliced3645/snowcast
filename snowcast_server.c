@@ -1,5 +1,6 @@
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netdb.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -8,6 +9,10 @@
 #include <memory.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <unistd.h>
+
 #define DEBUG
 
 #define MAX_LENGTH 256
@@ -41,6 +46,7 @@ struct InvalidCommand{
 };
 #pragma pack(pop)
 
+//this thread may use select() to deal with connections.
 void* listening_thread_func(void* args){
 	struct listen_param* lp = (struct listen_param*)args;
 	int server_sockfd = lp->sockfd;
@@ -52,39 +58,81 @@ void* listening_thread_func(void* args){
 		exit(-1);
 	}
 
-	//accept a client socket
-	int client_sockfd = accept(server_sockfd, 0, 0);
-	if(client_sockfd == -1){
-		close(client_sockfd);
-		close(server_sockfd);
-		printf("Accept func error: %s\n", strerror(errno));
-		exit(-1);
-	}
+	//setup vars for select()
+	fd_set fd_list, fd_list_temp;
+	int fd_max;
+	FD_ZERO(&fd_list);
+	FD_ZERO(&fd_list_temp);
 	
-	//Parse the received message
-	struct control_message msg;
-	int msg_length = 0;
-	while( (msg_length = recv(client_sockfd, &msg, sizeof(struct control_message), 0)) > 0){
-		uint8_t msg_type = msg.command_type;
-		if(msg_type == (uint8_t)0){
-			uint16_t clnt_udpport_n = msg.content;
-			printf("Received a hello! Connector UDP Port: %d\n", clnt_udpport);
-			
-			//respond to the hello here		
-			struct Welcome wl_msg = {(uint8_t)0, station_nums};
-			int bytes_sent = send(client_sockfd,(void*)&wl_msg, sizeof(struct Welcome), 0);
-			if(bytes_sent == -1){
-				printf("An error occured when sending a WELCOME message: %s\n", strerror(errno));
-			}
-			else if(bytes_sent != 3){
-				printf("NOT all contents of the Welcome message were sent..\n");
-			}
-		}
-		else if(msg_type == (uint8_t)1){
+	fd_max = server_sockfd;
+	FD_SET(server_sockfd, &fd_list);
+	FD_SET(server_sockfd, &fd_list_temp);
+	while(1){
 		
+		fd_list_temp = fd_list;
+		if((rv = select(fd_max +1 , &fd_list_temp, NULL, NULL, NULL)) == -1 ){
+			printf("An error occured when calling select..: %s\n", strerror(errno));
+			return -1;
 		}
-		else{
+		
+		int i;
+		int client_sockfd;
+		//to record new connected client's addr..
+		struct sockaddr client_connect_addr;
+		socklen_t addr_lenth = sizeof(client_connect_addr);
 
+		for ( i = 0 ; i <= fd_max; i++){
+			if(FD_ISSET(i, &fd_list_temp)){
+				//the server receives a new connection
+				if( i == server_sockfd){
+					if((client_sockfd = accept(server_sockfd, &client_connect_addr, &addr_lenth)) == -1){
+						printf("Error on accepting a client's connection : %s\n", strerror(errno));
+						continue;
+					}
+					else{
+						FD_SET(client_sockfd, &fd_list);
+						if (client_sockfd > fd_max) 	fd_max = client_sockfd;
+						printf("New Connection\n");
+					}
+				}
+				//Receive control message from snowcast_control.
+				else{
+					//Parse the received message
+					struct control_message msg;
+					int msg_length = 0;
+					if( (msg_length = recv(client_sockfd, &msg, sizeof(struct control_message), 0)) > 0){
+						uint8_t msg_type = msg.command_type;
+						if(msg_type == (uint8_t)0){
+							uint16_t clnt_udpport_n = msg.content;
+							uint16_t clnt_udpport_h = ntohs(clnt_udpport_n);
+							printf("Received a hello! Connector UDP Port: %d\n", clnt_udpport_h);
+				
+							//respond to the hello here		
+							struct Welcome wl_msg = {(uint8_t)0, station_nums};
+							int bytes_sent = send(client_sockfd,(void*)&wl_msg, sizeof(struct Welcome), 0);
+							if(bytes_sent == -1){
+								printf("An error occured when sending a WELCOME message: %s\n", strerror(errno));
+							}
+							else if(bytes_sent != 3){
+								printf("NOT all contents of the Welcome message were sent..\n");
+							}
+							else if(bytes_sent == 0){
+								printf("A connection ended..\n");
+								close(client_sockfd);
+								FD_CLR(client_sockfd, &fd_list);
+								continue;
+							}
+						}
+						else if(msg_type == (uint8_t)1){
+					
+						}
+						else{
+			
+						}
+					}
+					
+				}
+			}
 		}
 	}
 }
