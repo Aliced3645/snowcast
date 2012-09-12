@@ -20,6 +20,11 @@ struct Hello{
 	uint8_t commandType;
 	uint16_t udpPort;
 };
+
+struct SetStation{
+	uint8_t commandtype;
+	uint16_t stationNUmber;
+};
 #pragma pack(pop)
 int helloed = 0;
 
@@ -34,7 +39,7 @@ int send_hello(int sockfd, const char* clnt_udpport){
 	//The machine might be 32-bit alligned...
 	printf("Hello struct size: %d\n", sizeof(struct Hello));
 #endif
-	struct Hello hl_msg = {(uint8_t)0, clnt_udpport_n};
+	struct Hello hl_msg = {(uint8_t)0, (uint16_t)clnt_udpport_n};
 #ifdef DEBUG
 	printf("%d\n", sizeof(hl_msg));
 #endif
@@ -71,17 +76,32 @@ void* send_message_loop(void* socket){
 				printf("Ambiguous input! Do you mean 'set %d'? type [y] to confim or other keys to input again!\n", channel_num);
 				memset(input_msg, 0, MAX_LENGTH);
 				fgets(input_msg, MAX_LENGTH, stdin);
+				if((strlen(input_msg) > 0 ) && (input_msg[strlen(input_msg) - 1] == '\n'))
+					input_msg[strlen(input_msg) - 1] = '\0';
 				if( (strlen(input_msg) == 1) && input_msg[0] == 'y'){
-					//to send setstation package here....
-					printf("Sending setstation request...\n");
+					goto send;
 				}
 				else{
 					printf("Please input again your instruction here!\n");
 					continue;
 				}
 			}
+send:
 			//to send setstation package here..
-			printf("Sending setstation request...\n");
+			printf("Sending setstation request...You want to listen to the channel [%d] ~\n", channel_num);
+			struct SetStation ss_msg = {(uint8_t)1, (uint16_t)channel_num};
+			int bytes_sent = send(sockfd,(void*)&ss_msg, sizeof(struct Hello),0);
+			if(bytes_sent == -1){
+				printf("An error occured when sending a HELLO message: %s\n", strerror(errno));
+				exit(-1);
+			}
+			else if(bytes_sent != 3){
+				printf("NOT all contents of the Hello mesasge is sent...\n");
+				return 0;
+			}
+#ifdef DEBUG
+			printf("Request sent...\n");
+#endif
 			
 		}
 		else if((strncmp(input_msg, "exit", 4) == 0) || (strncmp(input_msg, "quit", 4) == 0)){
