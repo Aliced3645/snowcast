@@ -61,6 +61,7 @@ void* send_message_loop(void* socket){
 	int sockfd = (int)socket;
 	memset(input_msg, 0, MAX_LENGTH);
 	while(1){
+		printf("> ");
 		fgets(input_msg,MAX_LENGTH,stdin);	
 		if((strlen(input_msg) > 0 ) && (input_msg[strlen(input_msg) - 1] == '\n'))
 				input_msg[strlen(input_msg) - 1] = '\0';
@@ -73,7 +74,7 @@ void* send_message_loop(void* socket){
 			char* last = 0;
 			int channel_num = strtol(channel_str, &last, 10);
 			if((strlen(channel_str) == 0) || (last[0] != '\0')){
-				printf("Ambiguous input! Do you mean 'set %d'? type [y] to confim or other keys to input again!\n", channel_num);
+				printf("Ambiguous input! Do you mean 'set %d'? type [y] to confim or other keys to input again!\n> ", channel_num);
 				memset(input_msg, 0, MAX_LENGTH);
 				fgets(input_msg, MAX_LENGTH, stdin);
 				if((strlen(input_msg) > 0 ) && (input_msg[strlen(input_msg) - 1] == '\n'))
@@ -138,7 +139,7 @@ void* recv_message_loop(void* socket){
 			uint8_t msg_type = msg[0];
 			if(msg_type == (uint8_t)0){
 				uint16_t* num_station_p = (uint16_t*)(msg + 1);
-				printf("Welcome! There are %d music stations in Snowcast! Using set <num> to set channel!\n", *num_station_p);
+				printf("\nWelcome! There are %d music stations in Snowcast! Using set <num> to set channel!\n> ", *num_station_p);
 			}
 			else if(msg_type == (uint8_t)1){
 			}
