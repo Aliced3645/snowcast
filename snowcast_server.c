@@ -309,6 +309,7 @@ int main(int argc, char** argv){
 	char name[MAX_LENGTH];
 	size_t size;
 	gethostname(name,size);
+	printf("host name: %s\n");
 	
 	int rv;
 	if((rv = getaddrinfo(name, server_port, &hints, &servinfo)) == -1){
