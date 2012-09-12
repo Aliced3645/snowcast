@@ -302,17 +302,20 @@ int main(int argc, char** argv){
 
 	char* server_port = argv[1];
 	int sockfd;
-	struct addrinfo hints, *servinfo;
+	struct addrinfo hints, *servinfo, *p;
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
+	char name[MAX_LENGTH];
+	size_t size;
+	gethostname(name,size);
 	
 	int rv;
-	if((rv = getaddrinfo(NULL, server_port, &hints, &servinfo)) == -1){
+	if((rv = getaddrinfo(name, server_port, &hints, &servinfo)) == -1){
 		printf("Error in getting %s\n", strerror(errno));
 		exit(-1);
 	}
-	
+
 	if((sockfd = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol)) == -1){
 		close(sockfd);
 		printf("Error in initializing socket: %s\n", strerror(errno));
