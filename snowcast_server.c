@@ -16,7 +16,7 @@
 #define DEBUG
 
 #define MAX_LENGTH 256
-static uint16_t station_nums = 20;
+#define DEFAULT_CHANNEL_NUM 2
 
 struct listen_param{
 	int* sockfds;	
@@ -56,17 +56,36 @@ struct client_info_manager{
 
 struct client_info{
 	struct client_info* next_client_info;
+	struct client_info* channel_next_client;
 	struct sockaddr client_connect_addr;
 	char* client_readable_addr;
+	
 	uint16_t client_udp_port;
 	uint16_t client_channel;
 	uint16_t client_sockfd;
 };
 
-//initialize the client info manager..
+//manage information of channel
+struct channel_info;
+struct channel_info_manager{
+	uint8_t channel_total_number;
+	struct channel_info* first_channel;
+	struct channel_info* last_channel;
+};
+
+struct channel_info{
+	char* song_name;
+	struct channel_info* next_channel_info;
+	uint8_t client_total_number;
+	struct client_info* first_client;
+	struct client_info* last_client;
+};
+
+//initialize the client info manager and channel info manager..
 struct client_info_manager g_client_info_manager = {0, NULL, NULL};
+struct channel_info_manager g_channel_info_manager = {DEFAULT_CHANNEL_NUM, NULL, NULL};
 
-
+//channel structures
 struct client_info* get_client_info_by_socket(int sockfd){
 	struct client_info* info_traverser = g_client_info_manager.first_client;
 	while(info_traverser != NULL){
@@ -231,7 +250,7 @@ void* listening_thread_func(void* args){
 							}
 							target_client_info -> client_udp_port = clnt_udpport_h;
 							//respond to the hello here		
-							struct Welcome wl_msg = {(uint8_t)0, station_nums};
+							struct Welcome wl_msg = {(uint8_t)0, DEFAULT_CHANNEL_NUM};
 							int bytes_sent = send(client_sockfd,(void*)&wl_msg, sizeof(struct Welcome), 0);
 							if(bytes_sent == -1){
 								printf("An error occured when sending a WELCOME message: %s\n", strerror(errno));
