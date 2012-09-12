@@ -19,7 +19,7 @@
 static uint16_t station_nums = 20;
 
 struct listen_param{
-	int sockfd;	
+	int* sockfds;	
 };
 
 #pragma pack(push,1)
@@ -57,6 +57,7 @@ struct client_info_manager{
 struct client_info{
 	struct client_info* next_client_info;
 	struct sockaddr client_connect_addr;
+	char* client_readable_addr;
 	uint16_t client_udp_port;
 	uint16_t client_channel;
 	uint16_t client_sockfd;
@@ -84,6 +85,7 @@ int delete_client_info(int client_sockfd){
 		return -1;	
 	if(g_client_info_manager.client_total_number == 1){
 		if(g_client_info_manager.first_client->client_sockfd == client_sockfd){
+			free(g_client_info_manager.first_client->client_readable_addr);
 			free(g_client_info_manager.first_client);
 			g_client_info_manager.client_total_number = 0;
 			g_client_info_manager.first_client = g_client_info_manager.last_client = 0;
@@ -98,6 +100,7 @@ int delete_client_info(int client_sockfd){
 	if(pre->client_sockfd == client_sockfd){
 		g_client_info_manager.client_total_number -- ;
 		g_client_info_manager.first_client = next;
+		free(pre->client_readable_addr);
 		free(pre);
 		return client_sockfd;
 	}
@@ -108,6 +111,7 @@ int delete_client_info(int client_sockfd){
 				g_client_info_manager.last_client = pre;
 			pre->next_client_info = next->next_client_info;
 			g_client_info_manager.client_total_number --;
+			free(next->client_readable_addr);
 			free(next);
 			return client_sockfd;
 		}
@@ -118,29 +122,51 @@ int delete_client_info(int client_sockfd){
 	return -1;
 }
 
+int find_sockfd(int *fds, int target){
+	int size = sizeof(fds);
+	int i;
+	for(i = 0; i < size; i ++){
+		if( fds[i] == target)
+			return target;	
+	}
+	return -1;
+}
+
+//convert binary address to readable address (just within the client_info struct)
+void convert_binary_addr_to_readable_addr(struct client_info* target){
+		struct sockaddr binary_addr = target->client_connect_addr;
+		char* readable_addr = (char*)malloc(MAX_LENGTH);
+		memset(readable_addr, 0, MAX_LENGTH);
+		inet_ntop(AF_INET, &(((struct sockaddr_in*)&binary_addr)->sin_addr),readable_addr,INET_ADDRSTRLEN); 
+		target->client_readable_addr = readable_addr;
+		return;
+}
+
 //this thread may use select() to deal with connections.
 void* listening_thread_func(void* args){
 	struct listen_param* lp = (struct listen_param*)args;
-	int server_sockfd = lp->sockfd;
-	printf("Server starts listening to connection...(local socket ID: %d)\n",server_sockfd);
-	int rv;
-	if((rv = listen(server_sockfd, 0))  == -1){
-		close(server_sockfd);
-		printf("Listen Error: %s\n", strerror(errno));
-		exit(-1);
-	}
-
+	int *server_sockfds = lp->sockfds;
 	//setup vars for select()
 	fd_set fd_list, fd_list_temp;
-	int fd_max;
+	int fd_max = server_sockfds[0];
 	FD_ZERO(&fd_list);
 	FD_ZERO(&fd_list_temp);
-	
-	fd_max = server_sockfd;
-	FD_SET(server_sockfd, &fd_list);
-	FD_SET(server_sockfd, &fd_list_temp);
+	int i;
+	int rv;
+	for(i = 0; i < 2; i ++){
+		FD_SET(server_sockfds[i], &fd_list);
+		FD_SET(server_sockfds[i], &fd_list_temp);
+		if (server_sockfds[i] >  fd_max)
+			fd_max = server_sockfds[i];
+		printf("Server starts listening to connection...(local socket ID: %d)\n",server_sockfds[i]);
+		if((rv = listen(server_sockfds[i], 0))  == -1){
+			close(server_sockfds[i]);
+			printf("Listen Error: %s\n", strerror(errno));
+			exit(-1);
+		}
+	}
+
 	while(1){
-		
 		fd_list_temp = fd_list;
 		if((rv = select(fd_max +1 , &fd_list_temp, NULL, NULL, NULL)) == -1 ){
 			printf("An error occured when calling select..: %s\n", strerror(errno));
@@ -152,11 +178,11 @@ void* listening_thread_func(void* args){
 		//to record new connected client's addr..
 		struct sockaddr client_connect_addr;
 		socklen_t addr_lenth = sizeof(client_connect_addr);
-
+		int server_sockfd;
 		for ( i = 0 ; i <= fd_max; i++){
 			if(FD_ISSET(i, &fd_list_temp)){
 				//the server receives a new connection
-				if( i == server_sockfd){
+				if( (server_sockfd = find_sockfd(server_sockfds,i)) != -1){
 					if((client_sockfd = accept(server_sockfd, &client_connect_addr, &addr_lenth)) == -1){
 						printf("Error on accepting a client's connection : %s\n", strerror(errno));
 						continue;
@@ -169,6 +195,7 @@ void* listening_thread_func(void* args){
 						struct client_info* new_client_info = malloc(sizeof(struct client_info));
 						memset(new_client_info, 0, sizeof(struct client_info));
 						new_client_info->client_connect_addr = client_connect_addr;
+						convert_binary_addr_to_readable_addr(new_client_info);
 						new_client_info->client_sockfd = client_sockfd;
 						//leave udp port be to filled in the later process...
 						if(g_client_info_manager.client_total_number == 0){
@@ -216,10 +243,7 @@ void* listening_thread_func(void* args){
 								printf("A connection ended..\n");
 								close(client_sockfd);
 								FD_CLR(client_sockfd, &fd_list);
-								////////////////////////////////////////////////////////////
-								/////HERE TO DELETE client_info!!!! STILL TO BE CODED!!/////
-								////////////////////////////////////////////////////////////
-								
+								delete_client_info(client_sockfd);
 								continue;
 							}
 						}
@@ -229,13 +253,9 @@ void* listening_thread_func(void* args){
 							//get the client info to know the address and port
 							struct client_info* current_client =  get_client_info_by_socket(client_sockfd);
 							current_client->client_channel = channel_num;
-							///////////////////////////////////////////////////////////////////
-							/////////////////////NEEDS TO BE MODIFIED!!!///////////////////////
-							////////////////////////convert address..//////////////////////////
-							///////////////////////////////////////////////////////////////////
-							//struct sockaddr s = current_client->client_connect_addr;
 							uint16_t port_num = current_client->client_udp_port;
-							printf("Received a SetStation! The client ( client port : [%d] ) wants to listen to the channel [%d]. \n", port_num, channel_num);
+							char* readable_addr = current_client->client_readable_addr;
+							printf("Received a SetStation! The client (%s:%d) turns to the channel [%d]. \n", readable_addr, port_num, channel_num);
 							
 						}
 						else{
@@ -275,8 +295,8 @@ void* instruction_thread_func(void* param){
 			while(info_traverser != NULL){
 				uint16_t port = info_traverser->client_udp_port;
 				uint16_t channel = info_traverser->client_channel;
-				uint16_t sockfd = info_traverser->client_sockfd;
-				printf("client socket ID: [ %d ], port: [ %d ], channel: [%d] \n", sockfd, port, channel);
+				char* readable_addr = info_traverser->client_readable_addr;
+				printf("Client Address: [%s:%d], channel: [%d] \n", readable_addr, port, channel);
 				info_traverser = info_traverser -> next_client_info;
 			}	
 		}
@@ -301,35 +321,42 @@ int main(int argc, char** argv){
 	}
 
 	char* server_port = argv[1];
-	int sockfd;
-	struct addrinfo hints, *servinfo, *p;
+	//one for local loop, the other for actual network stocket.
+	int sockfds[2];
+	struct addrinfo hints;
+	struct addrinfo* servinfos[2];
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
-	char name[MAX_LENGTH];
-	size_t size;
-	gethostname(name,size);
-	printf("host name: %s\n");
+	char hostname[MAX_LENGTH];
+	size_t size = MAX_LENGTH;
+	gethostname(hostname,size);
+	printf("host name: %s\n", hostname);
+	char* names[2];
+	names[0] = hostname; //Network IP Addr
+	names[1] = NULL; //localhost
 	
-	int rv;
-	if((rv = getaddrinfo(name, server_port, &hints, &servinfo)) == -1){
-		printf("Error in getting %s\n", strerror(errno));
-		exit(-1);
-	}
+	int rv, i;
+	for(i = 0; i < 2; i ++){
+		if((rv = getaddrinfo(names[i], server_port, &hints, &servinfos[i])) == -1){
+			printf("Error in getting %s\n", strerror(errno));
+			exit(-1);
+		}
 
-	if((sockfd = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol)) == -1){
-		close(sockfd);
-		printf("Error in initializing socket: %s\n", strerror(errno));
-		exit(-1);
-	}	
+		if((sockfds[i] = socket(servinfos[i]->ai_family, servinfos[i]->ai_socktype, servinfos[i]->ai_protocol)) == -1){
+			close(sockfds[i]);
+			printf("Error in initializing socket: %s\n", strerror(errno));
+			exit(-1);
+		}	
 #ifdef DEBUG
-	printf("Socket ID: %d\n", sockfd);
+		printf("Socket ID: %d\n", sockfds[i]);
 #endif
 
-	if((rv = bind(sockfd, servinfo->ai_addr, servinfo->ai_addrlen)) < 0){
-		close(sockfd);
-		printf("Error in binding address to socket: %s\n", strerror(errno));
-		exit(-1);
+		if((rv = bind(sockfds[i], servinfos[i]->ai_addr, servinfos[i]->ai_addrlen)) < 0){
+			close(sockfds[i]);
+			printf("Error in binding address to socket: %s\n", strerror(errno));
+			exit(-1);
+		}
 	}
 	
 	//create a single thread for listening tcp mesasges...
@@ -339,7 +366,7 @@ int main(int argc, char** argv){
 	pthread_attr_init(&attr);
 	pthread_attr_setstacksize(&attr, 20 * 1024 * 1024);
 	struct listen_param* lp = (struct listen_param*)malloc(sizeof(struct listen_param));
-	lp->sockfd = sockfd;
+	lp->sockfds = sockfds;
 	pthread_create(&listening_thread, &attr, listening_thread_func, lp);
 	pthread_create(&instruction_thread, &attr, instruction_thread_func, NULL);
 	

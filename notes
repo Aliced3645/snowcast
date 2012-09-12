@@ -21,4 +21,11 @@ then needs to iterate from 0 to max file discriptor to handle each file.
 ************************************
 The server should record the address of each client, and also their current channel
 
+address of client? from sockaddr to addr_info?
 
+##Done
+
+***************************************
+Now the problem is :
+1. UDP client will have to start to work.
+2. Manage channel structure.
