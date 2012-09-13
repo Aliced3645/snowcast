@@ -136,11 +136,11 @@ int add_client_to_station(int client_sockfd, int station_num){
 
 //caution: not remove the info forever
 int delete_client_from_station(int client_sockfd, int station_num){
-	struct station_info* target_station_info = get_station_info_by_num(station_num);
 	struct client_info* target_client_info = get_client_info_by_socket(client_sockfd);
-	if(target_client_info->client_station == -1){
+	if(target_client_info->client_station == 65535){
 			return 0;
 	}
+	struct station_info* target_station_info = get_station_info_by_num(station_num);
 
 	if(target_station_info == 0 || target_client_info == 0){
 		printf("Failure in deleting the client from station \n");
@@ -343,8 +343,9 @@ void* listening_thread_func(void* args){
 							char* readable_addr = target_client_info->client_readable_addr;
 							printf("Received a hello! Connector from: [%s:%d]\n", readable_addr,clnt_udpport_h);
 							
-							//respond to the hello here		
-							struct Welcome wl_msg = {(uint8_t)0, DEFAULT_STATION_NUM};
+							//respond to the hello here	
+							uint16_t station_num = htons(DEFAULT_STATION_NUM);
+							struct Welcome wl_msg = {(uint8_t)0, station_num};
 							int bytes_sent = send(client_sockfd,(void*)&wl_msg, sizeof(struct Welcome), 0);
 							if(bytes_sent == -1){
 								printf("An error occured when sending a WELCOME message: %s\n", strerror(errno));
@@ -364,16 +365,16 @@ void* listening_thread_func(void* args){
 						}
 						else if(msg_type == (uint8_t)SET_STATION){
 							//receive a SetStation
-							uint16_t station_num = (uint16_t)msg.content;
+							uint16_t station_num = ntohs((uint16_t)msg.content);
 							//get the client info to know the address and port
 							struct client_info* current_client =  get_client_info_by_socket(client_sockfd);
-							uint8_t former_station = current_client->client_station;
+							uint16_t former_station = current_client->client_station;
 							current_client->client_station = station_num;
 							uint16_t port_num = current_client->client_udp_port;
 							char* readable_addr = current_client->client_readable_addr;
 							printf("Received a SetStation! The client (%s:%d) turns to the station [%d]. \n", readable_addr, port_num, station_num);
 							//change the station
-							if(former_station != 255){
+							if(former_station != 65535){
 								delete_client_from_station(client_sockfd, former_station);
 							}
 							add_client_to_station(client_sockfd, station_num);						
@@ -463,7 +464,6 @@ void* instruction_thread_func(void* param){
 }
 
 int main(int argc, char** argv){
-	
 	if(argc < 2){
 		printf("Usage: snowcast_server tcpport [file1] [file2] [file3] [...] \n");
 		exit(-1);

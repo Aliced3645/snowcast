@@ -100,6 +100,7 @@ send:
 				continue;
 			}
 			printf("Sending setstation request...You want to listen to the station [%d] ~\n", station_num);
+			station_num = htons(station_num);
 			struct SetStation ss_msg = {(uint8_t)1, (uint16_t)station_num};
 			int bytes_sent = send(sockfd,(void*)&ss_msg, sizeof(struct Hello),0);
 			if(bytes_sent == -1){
@@ -148,8 +149,9 @@ void* recv_message_loop(void* socket){
 			//parse the message received..
 			uint8_t msg_type = msg[0];
 			if(msg_type == (uint8_t)0){
-				uint16_t* num_station_p = (uint16_t*)(msg + 1);
-				printf("\n> Welcome! There are %d music stations! Using set <num> to set station!\n> ", *num_station_p);
+				uint16_t* num_station_p = (uint16_t*)(msg+1);
+				uint16_t num_station = ntohs(*num_station_p);
+				printf("\n> Welcome! There are %d music stations! Using set <num> to set station!\n> ", num_station);
 			}
 			else if(msg_type == (uint8_t)1){
 			}

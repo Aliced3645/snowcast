@@ -29,3 +29,4 @@ address of client? from sockaddr to addr_info?
 Now the problem is :
 1. UDP client will have to start to work.
 2. Manage channel structure.
+3. ntoh hton all not coded
