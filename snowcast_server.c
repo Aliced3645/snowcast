@@ -258,6 +258,9 @@ void* listening_thread_func(void* args){
 	int fd_max = server_sockfds[0];
 	FD_ZERO(&fd_list);
 	FD_ZERO(&fd_list_temp);
+	struct timeval tv;
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
 	int i;
 	int rv;
 	printf("Server starts listening to connection...\n");
@@ -274,8 +277,9 @@ void* listening_thread_func(void* args){
 	}
 
 	while(1){
+		//check..whether song has been ended
 		fd_list_temp = fd_list;
-		if((rv = select(fd_max +1 , &fd_list_temp, NULL, NULL, NULL)) == -1 ){
+		if((rv = select(fd_max +1 , &fd_list_temp, NULL, NULL, &tv)) == -1 ){
 			printf("An error occured when calling select..: %s\n", strerror(errno));
 			exit(-1);
 		}
