@@ -67,14 +67,14 @@ void* send_message_loop(void* socket){
 				input_msg[strlen(input_msg) - 1] = '\0';
 		//decide what type of message
 		if(strncmp(input_msg,"set", 3) == 0){
-			//take the channel number
-			char channel_str[MAX_LENGTH];
-			memset(channel_str, 0, MAX_LENGTH);
-			strcpy(channel_str, input_msg + 4);
+			//take the station number
+			char station_str[MAX_LENGTH];
+			memset(station_str, 0, MAX_LENGTH);
+			strcpy(station_str, input_msg + 4);
 			char* last = 0;
-			int channel_num = strtol(channel_str, &last, 10);
-			if((strlen(channel_str) == 0) || (last[0] != '\0')){
-				printf("> Ambiguous input! Do you mean 'set %d'? type [y] to confim or other keys to input again!\n> ", channel_num);
+			int station_num = strtol(station_str, &last, 10);
+			if((strlen(station_str) == 0) || (last[0] != '\0')){
+				printf("> Ambiguous input! Do you mean 'set %d'? type [y] to confim or other keys to input again!\n> ", station_num);
 				memset(input_msg, 0, MAX_LENGTH);
 				fgets(input_msg, MAX_LENGTH, stdin);
 				if((strlen(input_msg) > 0 ) && (input_msg[strlen(input_msg) - 1] == '\n'))
@@ -89,8 +89,8 @@ void* send_message_loop(void* socket){
 			}
 send:
 			//to send setstation package here..
-			printf("Sending setstation request...You want to listen to the channel [%d] ~\n", channel_num);
-			struct SetStation ss_msg = {(uint8_t)1, (uint16_t)channel_num};
+			printf("Sending setstation request...You want to listen to the station [%d] ~\n", station_num);
+			struct SetStation ss_msg = {(uint8_t)1, (uint16_t)station_num};
 			int bytes_sent = send(sockfd,(void*)&ss_msg, sizeof(struct Hello),0);
 			if(bytes_sent == -1){
 				printf("An error occured when sending a HELLO message: %s\n", strerror(errno));
@@ -139,7 +139,7 @@ void* recv_message_loop(void* socket){
 			uint8_t msg_type = msg[0];
 			if(msg_type == (uint8_t)0){
 				uint16_t* num_station_p = (uint16_t*)(msg + 1);
-				printf("\n> Welcome! There are %d music channels! Using set <num> to set channel!\n> ", *num_station_p);
+				printf("\n> Welcome! There are %d music stations! Using set <num> to set station!\n> ", *num_station_p);
 			}
 			else if(msg_type == (uint8_t)1){
 			}

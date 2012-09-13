@@ -16,7 +16,7 @@
 #define DEBUG
 
 #define MAX_LENGTH 256
-#define DEFAULT_CHANNEL_NUM 2
+#define DEFAULT_station_NUM 2
 
 struct listen_param{
 	int* sockfds;	
@@ -56,36 +56,36 @@ struct client_info_manager{
 
 struct client_info{
 	struct client_info* next_client_info;
-	struct client_info* channel_next_client;
+	struct client_info* station_next_client;
 	struct sockaddr client_connect_addr;
 	char* client_readable_addr;
 	
 	uint16_t client_udp_port;
-	uint16_t client_channel;
+	uint16_t client_station;
 	uint16_t client_sockfd;
 };
 
-//manage information of channel
-struct channel_info;
-struct channel_info_manager{
-	uint8_t channel_total_number;
-	struct channel_info* first_channel;
-	struct channel_info* last_channel;
+//manage information of station
+struct station_info;
+struct station_info_manager{
+	uint8_t station_total_number;
+	struct station_info* first_station;
+	struct station_info* last_station;
 };
 
-struct channel_info{
+struct station_info{
 	char* song_name;
-	struct channel_info* next_channel_info;
+	struct station_info* next_station_info;
 	uint8_t client_total_number;
 	struct client_info* first_client;
 	struct client_info* last_client;
 };
 
-//initialize the client info manager and channel info manager..
+//initialize the client info manager and station info manager..
 struct client_info_manager g_client_info_manager = {0, NULL, NULL};
-struct channel_info_manager g_channel_info_manager = {DEFAULT_CHANNEL_NUM, NULL, NULL};
+struct station_info_manager g_station_info_manager = {DEFAULT_station_NUM, NULL, NULL};
 
-//channel structures
+//station structures
 struct client_info* get_client_info_by_socket(int sockfd){
 	struct client_info* info_traverser = g_client_info_manager.first_client;
 	while(info_traverser != NULL){
@@ -250,7 +250,7 @@ void* listening_thread_func(void* args){
 							}
 							target_client_info -> client_udp_port = clnt_udpport_h;
 							//respond to the hello here		
-							struct Welcome wl_msg = {(uint8_t)0, DEFAULT_CHANNEL_NUM};
+							struct Welcome wl_msg = {(uint8_t)0, DEFAULT_station_NUM};
 							int bytes_sent = send(client_sockfd,(void*)&wl_msg, sizeof(struct Welcome), 0);
 							if(bytes_sent == -1){
 								printf("An error occured when sending a WELCOME message: %s\n", strerror(errno));
@@ -268,13 +268,13 @@ void* listening_thread_func(void* args){
 						}
 						else if(msg_type == (uint8_t)1){
 							//receive a SetStation
-							uint16_t channel_num = (uint16_t)msg.content;
+							uint16_t station_num = (uint16_t)msg.content;
 							//get the client info to know the address and port
 							struct client_info* current_client =  get_client_info_by_socket(client_sockfd);
-							current_client->client_channel = channel_num;
+							current_client->client_station = station_num;
 							uint16_t port_num = current_client->client_udp_port;
 							char* readable_addr = current_client->client_readable_addr;
-							printf("Received a SetStation! The client (%s:%d) turns to the channel [%d]. \n", readable_addr, port_num, channel_num);
+							printf("Received a SetStation! The client (%s:%d) turns to the station [%d]. \n", readable_addr, port_num, station_num);
 							
 						}
 						else{
@@ -309,13 +309,13 @@ void* instruction_thread_func(void* param){
 		//parse the instruction
 		char instruction = input_msg[0];
 		if(instruction == 'p'){
-			//print all connected clients ( and channel info to be implemented )
+			//print all connected clients ( and station info to be implemented )
 			struct client_info* info_traverser = g_client_info_manager.first_client;
 			while(info_traverser != NULL){
 				uint16_t port = info_traverser->client_udp_port;
-				uint16_t channel = info_traverser->client_channel;
+				uint16_t station = info_traverser->client_station;
 				char* readable_addr = info_traverser->client_readable_addr;
-				printf("Client Address: [%s:%d], channel: [%d] \n", readable_addr, port, channel);
+				printf("Client Address: [%s:%d], station: [%d] \n", readable_addr, port, station);
 				info_traverser = info_traverser -> next_client_info;
 			}	
 		}
