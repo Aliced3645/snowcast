@@ -21,7 +21,7 @@
 
 #define MAX_LENGTH 256
 #define DEFAULT_STATION_NUM 2
-static uint8_t total_station_num = DEFAULT_STATION_NUM;
+static uint16_t total_station_num = DEFAULT_STATION_NUM;
 
 struct listen_param{
 	int* sockfds;	
@@ -80,7 +80,7 @@ struct station_info_manager{
 
 struct station_info{
 	char* song_name;
-	uint8_t station_num;
+	int station_num;
 	uint8_t current_progress; // decide whether to send an annnouce..
 	struct station_info* next_station_info;
 	uint8_t client_total_number;
@@ -138,8 +138,12 @@ int add_client_to_station(int client_sockfd, int station_num){
 int delete_client_from_station(int client_sockfd, int station_num){
 	struct station_info* target_station_info = get_station_info_by_num(station_num);
 	struct client_info* target_client_info = get_client_info_by_socket(client_sockfd);
+	if(target_client_info->client_station == -1){
+			return 0;
+	}
+
 	if(target_station_info == 0 || target_client_info == 0){
-		printf("Failure in deleting the client from station\n");
+		printf("Failure in deleting the client from station \n");
 		return -1;
 	}
 	if(target_station_info->client_total_number == 0)
@@ -184,7 +188,8 @@ int delete_client_info(int client_sockfd){
 		return -1;	
 	if(g_client_info_manager.client_total_number == 1){
 		if(g_client_info_manager.first_client->client_sockfd == client_sockfd){
-			delete_client_from_station(g_client_info_manager.first_client->client_sockfd, g_client_info_manager.first_client->client_station);
+			if(delete_client_from_station(g_client_info_manager.first_client->client_sockfd, g_client_info_manager.first_client->client_station) == -1)
+				return -1;
 			free(g_client_info_manager.first_client->client_readable_addr);
 			free(g_client_info_manager.first_client);
 			g_client_info_manager.client_total_number = 0;
@@ -198,9 +203,9 @@ int delete_client_info(int client_sockfd){
 	pre = g_client_info_manager.first_client;
 	next = pre->next_client_info;
 	if(pre->client_sockfd == client_sockfd){
+		delete_client_from_station(pre->client_sockfd, pre->client_station);
 		g_client_info_manager.client_total_number -- ;
 		g_client_info_manager.first_client = next;
-		delete_client_from_station(pre->client_sockfd, pre->client_station);
 		free(pre->client_readable_addr);
 		free(pre);
 		return client_sockfd;
@@ -208,11 +213,11 @@ int delete_client_info(int client_sockfd){
 	while(next != 0){
 		if(next->client_sockfd == client_sockfd){
 			//if it is the last one to be deleted, then update the last_client
+			delete_client_from_station(next->client_sockfd, next->client_station);
 			if(next == g_client_info_manager.last_client)
 				g_client_info_manager.last_client = pre;
 			pre->next_client_info = next->next_client_info;
 			g_client_info_manager.client_total_number --;
-			delete_client_from_station(next->client_sockfd, next->client_station);
 			free(next->client_readable_addr);
 			free(next);
 			return client_sockfd;
@@ -255,13 +260,13 @@ void* listening_thread_func(void* args){
 	FD_ZERO(&fd_list_temp);
 	int i;
 	int rv;
+	printf("Server starts listening to connection...\n");
 	for(i = 0; i < 2; i ++){
 		FD_SET(server_sockfds[i], &fd_list);
 		FD_SET(server_sockfds[i], &fd_list_temp);
 		if (server_sockfds[i] >  fd_max)
 			fd_max = server_sockfds[i];
-		printf("Server starts listening to connection...(local socket ID: %d)\n",server_sockfds[i]);
-		if((rv = listen(server_sockfds[i], 0))  == -1){
+			if((rv = listen(server_sockfds[i], 0))  == -1){
 			close(server_sockfds[i]);
 			printf("Listen Error: %s\n", strerror(errno));
 			exit(-1);
@@ -299,6 +304,7 @@ void* listening_thread_func(void* args){
 						new_client_info->client_connect_addr = client_connect_addr;
 						convert_binary_addr_to_readable_addr(new_client_info);
 						new_client_info->client_sockfd = client_sockfd;
+						new_client_info->client_station = -1;
 						//leave udp port be to filled in the later process...
 						if(g_client_info_manager.client_total_number == 0){
 							g_client_info_manager.first_client = new_client_info;
@@ -333,8 +339,10 @@ void* listening_thread_func(void* args){
 							uint16_t clnt_udpport_n = (uint16_t)msg.content;
 							uint16_t clnt_udpport_h = ntohs(clnt_udpport_n);
 							target_client_info -> client_udp_port = clnt_udpport_h;
+							target_client_info -> client_station = -1;
 							char* readable_addr = target_client_info->client_readable_addr;
 							printf("Received a hello! Connector from: [%s:%d]\n", readable_addr,clnt_udpport_h);
+							
 							//respond to the hello here		
 							struct Welcome wl_msg = {(uint8_t)0, DEFAULT_STATION_NUM};
 							int bytes_sent = send(client_sockfd,(void*)&wl_msg, sizeof(struct Welcome), 0);
@@ -352,7 +360,7 @@ void* listening_thread_func(void* args){
 								continue;
 							}
 							//add the client into the channel management structure
-							add_client_to_station(client_sockfd, 0);
+							//add_client_to_station(client_sockfd, 0);
 						}
 						else if(msg_type == (uint8_t)SET_STATION){
 							//receive a SetStation
@@ -365,7 +373,9 @@ void* listening_thread_func(void* args){
 							char* readable_addr = current_client->client_readable_addr;
 							printf("Received a SetStation! The client (%s:%d) turns to the station [%d]. \n", readable_addr, port_num, station_num);
 							//change the station
-							delete_client_from_station(client_sockfd, former_station);
+							if(former_station != 255){
+								delete_client_from_station(client_sockfd, former_station);
+							}
 							add_client_to_station(client_sockfd, station_num);						
 						}
 						else{
@@ -408,7 +418,8 @@ void* instruction_thread_func(void* param){
 				uint16_t port = info_traverser->client_udp_port;
 				uint16_t station = info_traverser->client_station;
 				char* readable_addr = info_traverser->client_readable_addr;
-				printf("Client Address: [%s:%d], station: [%d] \n", readable_addr, port, station);
+				int sockfd = info_traverser->client_sockfd;
+				printf("Client Address: [%s:%d], station: [%d], socket: [%d] \n", readable_addr, port, station, sockfd);
 				info_traverser = info_traverser -> next_client_info;
 			}	
 		}
@@ -528,5 +539,7 @@ int main(int argc, char** argv){
 	pthread_join(listening_thread, 0);
 	
 	free(lp);
+	close(sockfds[1]);
+	close(sockfds[0]);
 	return 0;
 }
