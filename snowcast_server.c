@@ -13,10 +13,15 @@
 #include <netinet/in.h>
 #include <unistd.h>
 
+#define HELLO 0
+#define SET_STATION 1
+
+
 #define DEBUG
 
 #define MAX_LENGTH 256
-#define DEFAULT_station_NUM 2
+#define DEFAULT_STATION_NUM 2
+static uint8_t total_station_num = DEFAULT_STATION_NUM;
 
 struct listen_param{
 	int* sockfds;	
@@ -75,6 +80,8 @@ struct station_info_manager{
 
 struct station_info{
 	char* song_name;
+	uint8_t station_num;
+	uint8_t current_progress; // decide whether to send an annnouce..
 	struct station_info* next_station_info;
 	uint8_t client_total_number;
 	struct client_info* first_client;
@@ -83,9 +90,8 @@ struct station_info{
 
 //initialize the client info manager and station info manager..
 struct client_info_manager g_client_info_manager = {0, NULL, NULL};
-struct station_info_manager g_station_info_manager = {DEFAULT_station_NUM, NULL, NULL};
+struct station_info_manager g_station_info_manager = {0, NULL, NULL};
 
-//station structures
 struct client_info* get_client_info_by_socket(int sockfd){
 	struct client_info* info_traverser = g_client_info_manager.first_client;
 	while(info_traverser != NULL){
@@ -97,6 +103,80 @@ struct client_info* get_client_info_by_socket(int sockfd){
 	return NULL;
 }
 
+struct station_info* get_station_info_by_num(int num){
+	struct station_info* info_traverser = g_station_info_manager.first_station;
+	while(info_traverser != NULL){
+		if(info_traverser->station_num == num)
+			return info_traverser;
+		info_traverser = info_traverser->next_station_info;
+	}
+	return NULL;
+}
+
+//add a client info to a station
+int add_client_to_station(int client_sockfd, int station_num){
+	if(station_num < 0 || station_num >= total_station_num){
+		printf("Failure in adding the client to the station\n");
+		return -1;
+	}
+	struct station_info* target_station_info = get_station_info_by_num(station_num);
+	struct client_info* target_client_info = get_client_info_by_socket(client_sockfd);
+	if(target_station_info->client_total_number == 0){
+		target_station_info->first_client = target_station_info->last_client = target_client_info;
+		target_client_info->station_next_client = 0;
+	}
+	else{
+		target_station_info->last_client->station_next_client = target_client_info;
+		target_station_info->last_client = target_client_info;
+		target_client_info->station_next_client = 0;
+	}
+	target_station_info->client_total_number ++ ;
+	return 0;
+}
+
+//caution: not remove the info forever
+int delete_client_from_station(int client_sockfd, int station_num){
+	struct station_info* target_station_info = get_station_info_by_num(station_num);
+	struct client_info* target_client_info = get_client_info_by_socket(client_sockfd);
+	if(target_station_info == 0 || target_client_info == 0){
+		printf("Failure in deleting the client from station\n");
+		return -1;
+	}
+	if(target_station_info->client_total_number == 0)
+		return -1;
+	if(target_station_info->client_total_number == 1){
+		if(target_station_info->first_client->client_sockfd == client_sockfd){
+			target_station_info->client_total_number = 0;
+			target_station_info->first_client = target_station_info->last_client = 0;
+			return client_sockfd;
+		}
+		else
+			return -1;
+	}
+	
+	struct client_info* pre, *next;
+	pre = target_station_info->first_client;
+	next = pre->station_next_client;
+
+	if(pre->client_sockfd == client_sockfd){
+		target_station_info->client_total_number --;
+		target_station_info->first_client = next;
+		return client_sockfd;
+	}
+	while(next != 0){
+		if(next->client_sockfd == client_sockfd){
+			if(next == target_station_info->last_client)
+				target_station_info->last_client = pre;
+			pre->station_next_client = next->station_next_client;
+			target_station_info->client_total_number --;
+			return client_sockfd;
+		}
+		pre = next;
+		next = next->station_next_client;
+	}
+	return -1;
+}
+
 //delete a client info from the list.
 //return -1 if failed
 int delete_client_info(int client_sockfd){
@@ -104,6 +184,7 @@ int delete_client_info(int client_sockfd){
 		return -1;	
 	if(g_client_info_manager.client_total_number == 1){
 		if(g_client_info_manager.first_client->client_sockfd == client_sockfd){
+			delete_client_from_station(g_client_info_manager.first_client->client_sockfd, g_client_info_manager.first_client->client_station);
 			free(g_client_info_manager.first_client->client_readable_addr);
 			free(g_client_info_manager.first_client);
 			g_client_info_manager.client_total_number = 0;
@@ -119,6 +200,7 @@ int delete_client_info(int client_sockfd){
 	if(pre->client_sockfd == client_sockfd){
 		g_client_info_manager.client_total_number -- ;
 		g_client_info_manager.first_client = next;
+		delete_client_from_station(pre->client_sockfd, pre->client_station);
 		free(pre->client_readable_addr);
 		free(pre);
 		return client_sockfd;
@@ -130,6 +212,7 @@ int delete_client_info(int client_sockfd){
 				g_client_info_manager.last_client = pre;
 			pre->next_client_info = next->next_client_info;
 			g_client_info_manager.client_total_number --;
+			delete_client_from_station(next->client_sockfd, next->client_station);
 			free(next->client_readable_addr);
 			free(next);
 			return client_sockfd;
@@ -201,7 +284,7 @@ void* listening_thread_func(void* args){
 		for ( i = 0 ; i <= fd_max; i++){
 			if(FD_ISSET(i, &fd_list_temp)){
 				//the server receives a new connection
-				if( (server_sockfd = find_sockfd(server_sockfds,i)) != -1){
+				if((server_sockfd = find_sockfd(server_sockfds,i))!= -1){
 					if((client_sockfd = accept(server_sockfd, &client_connect_addr, &addr_lenth)) == -1){
 						printf("Error on accepting a client's connection : %s\n", strerror(errno));
 						continue;
@@ -211,7 +294,7 @@ void* listening_thread_func(void* args){
 						if (client_sockfd > fd_max) 	
 								fd_max = client_sockfd;
 						//record the info
-						struct client_info* new_client_info = malloc(sizeof(struct client_info));
+						struct client_info* new_client_info = (struct client_info*)malloc(sizeof(struct client_info));
 						memset(new_client_info, 0, sizeof(struct client_info));
 						new_client_info->client_connect_addr = client_connect_addr;
 						convert_binary_addr_to_readable_addr(new_client_info);
@@ -234,23 +317,26 @@ void* listening_thread_func(void* args){
 					//Parse the received message
 					client_sockfd = i;
 					struct control_message msg;
+
 					int msg_length = 0;
 					if( (msg_length = recv(client_sockfd, &msg, sizeof(struct control_message), 0)) > 0){
 						uint8_t msg_type = msg.command_type;
-						if(msg_type == (uint8_t)0){
+						//default station: 0
+						if(msg_type == (uint8_t)HELLO){
 							//receive a Hello
-							uint16_t clnt_udpport_n = (uint16_t)msg.content;
-							uint16_t clnt_udpport_h = ntohs(clnt_udpport_n);
-							printf("Received a hello! Connector UDP Port: %d\n", clnt_udpport_h);
-							//record the udp port to the client_info struct
 							struct client_info* target_client_info = get_client_info_by_socket(client_sockfd);
 							if(target_client_info == NULL){
 								printf("Error in fetching client info!\n");
 								exit(-1);	
 							}
+							//record udp port
+							uint16_t clnt_udpport_n = (uint16_t)msg.content;
+							uint16_t clnt_udpport_h = ntohs(clnt_udpport_n);
 							target_client_info -> client_udp_port = clnt_udpport_h;
+							char* readable_addr = target_client_info->client_readable_addr;
+							printf("Received a hello! Connector from: [%s:%d]\n", readable_addr,clnt_udpport_h);
 							//respond to the hello here		
-							struct Welcome wl_msg = {(uint8_t)0, DEFAULT_station_NUM};
+							struct Welcome wl_msg = {(uint8_t)0, DEFAULT_STATION_NUM};
 							int bytes_sent = send(client_sockfd,(void*)&wl_msg, sizeof(struct Welcome), 0);
 							if(bytes_sent == -1){
 								printf("An error occured when sending a WELCOME message: %s\n", strerror(errno));
@@ -265,17 +351,22 @@ void* listening_thread_func(void* args){
 								delete_client_info(client_sockfd);
 								continue;
 							}
+							//add the client into the channel management structure
+							add_client_to_station(client_sockfd, 0);
 						}
-						else if(msg_type == (uint8_t)1){
+						else if(msg_type == (uint8_t)SET_STATION){
 							//receive a SetStation
 							uint16_t station_num = (uint16_t)msg.content;
 							//get the client info to know the address and port
 							struct client_info* current_client =  get_client_info_by_socket(client_sockfd);
+							uint8_t former_station = current_client->client_station;
 							current_client->client_station = station_num;
 							uint16_t port_num = current_client->client_udp_port;
 							char* readable_addr = current_client->client_readable_addr;
 							printf("Received a SetStation! The client (%s:%d) turns to the station [%d]. \n", readable_addr, port_num, station_num);
-							
+							//change the station
+							delete_client_from_station(client_sockfd, former_station);
+							add_client_to_station(client_sockfd, station_num);						
 						}
 						else{
 			
@@ -284,12 +375,14 @@ void* listening_thread_func(void* args){
 					else if(msg_length == 0){
 						printf("A client [socket num: %d] has disconnected to the server..\n", client_sockfd);
 						close(client_sockfd);
+
 						FD_CLR(client_sockfd, &fd_list);
 						//delete a client_info..
 						if(delete_client_info(client_sockfd) == -1){
 							printf("An error occured when updating the client information list..\n");
 							exit(-1);
-						}					
+						}	
+
 					}
 				}
 			}
@@ -308,7 +401,7 @@ void* instruction_thread_func(void* param){
 			input_msg[strlen(input_msg) - 1] = '\0';
 		//parse the instruction
 		char instruction = input_msg[0];
-		if(instruction == 'p'){
+		if(instruction == 'c'){
 			//print all connected clients ( and station info to be implemented )
 			struct client_info* info_traverser = g_client_info_manager.first_client;
 			while(info_traverser != NULL){
@@ -319,12 +412,38 @@ void* instruction_thread_func(void* param){
 				info_traverser = info_traverser -> next_client_info;
 			}	
 		}
+		else if(instruction == 'p'){
+			//print all channels with all clients
+			struct station_info* station_traverser = g_station_info_manager.first_station;
+			while(station_traverser != NULL){
+				uint8_t station_num = station_traverser->station_num;
+				char* song_name = station_traverser->song_name;
+				uint8_t client_total_number = station_traverser->client_total_number;
+				printf("Station [%d]: Playing:[%s] | [%d] clients listening:\n", station_num, song_name, client_total_number);
+				struct client_info* client_traverser = station_traverser->first_client;
+				while(client_traverser != NULL){
+					uint16_t port = client_traverser->client_udp_port;
+					char* readable_addr = client_traverser->client_readable_addr;
+					printf("\t Client Address: [%s:%d]\n", readable_addr, port);
+					client_traverser = client_traverser -> station_next_client;
+				}
+				station_traverser = station_traverser->next_station_info;
+			}
+		}
 		else if(instruction == 'q'){
 			//release all structure objects
 			while(g_client_info_manager.client_total_number != 0){
+				//delete all client info
 				struct client_info* to_delete = g_client_info_manager.first_client;
 				g_client_info_manager.first_client = to_delete->next_client_info;
 				g_client_info_manager.client_total_number --;
+				free(to_delete);
+			}
+			while(g_station_info_manager.station_total_number != 0){
+				//delete all station info
+				struct station_info* to_delete = g_station_info_manager.first_station;
+				g_station_info_manager.first_station = to_delete->next_station_info;
+				g_station_info_manager.station_total_number --;
 				free(to_delete);
 			}
 			exit(0);
@@ -338,7 +457,9 @@ int main(int argc, char** argv){
 		printf("Usage: snowcast_server tcpport [file1] [file2] [file3] [...] \n");
 		exit(-1);
 	}
-
+#ifdef DEBUG
+	char* songnames[2] = {"Beat It", "Tuesday"};
+#endif
 	char* server_port = argv[1];
 	//one for local loop, the other for actual network stocket.
 	int sockfds[2];
@@ -367,15 +488,29 @@ int main(int argc, char** argv){
 			printf("Error in initializing socket: %s\n", strerror(errno));
 			exit(-1);
 		}	
-#ifdef DEBUG
-		printf("Socket ID: %d\n", sockfds[i]);
-#endif
-
 		if((rv = bind(sockfds[i], servinfos[i]->ai_addr, servinfos[i]->ai_addrlen)) < 0){
 			close(sockfds[i]);
 			printf("Error in binding address to socket: %s\n", strerror(errno));
 			exit(-1);
 		}
+	}
+	
+	//initialize the stations
+	for(i = 0; i < total_station_num; i ++){
+		struct station_info* current_station = (struct station_info*)malloc(sizeof(struct station_info));
+		memset(current_station,0,sizeof(struct station_info));
+		current_station->song_name = songnames[i];
+		current_station->station_num = i;
+		current_station->next_station_info = 0;
+		if(g_station_info_manager.station_total_number == 0){
+			g_station_info_manager.first_station = current_station;
+			g_station_info_manager.last_station = current_station;		
+		}
+		else{
+			g_station_info_manager.last_station -> next_station_info = current_station;
+			g_station_info_manager.last_station = current_station;
+		}
+		g_station_info_manager.station_total_number ++;
 	}
 	
 	//create a single thread for listening tcp mesasges...

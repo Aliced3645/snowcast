@@ -26,7 +26,11 @@ struct SetStation{
 	uint16_t stationNUmber;
 };
 #pragma pack(pop)
+
 int helloed = 0;
+
+#define DEFAULT_STATION_NUM 2
+static uint8_t total_station_num = DEFAULT_STATION_NUM;
 
 int send_hello(int sockfd, const char* clnt_udpport){
 	//convert host byte order to network order
@@ -61,6 +65,7 @@ void* send_message_loop(void* socket){
 	int sockfd = (int)socket;
 	memset(input_msg, 0, MAX_LENGTH);
 	while(1){
+		memset(input_msg, 0, MAX_LENGTH);
 		printf("> ");
 		fgets(input_msg,MAX_LENGTH,stdin);	
 		if((strlen(input_msg) > 0 ) && (input_msg[strlen(input_msg) - 1] == '\n'))
@@ -89,6 +94,11 @@ void* send_message_loop(void* socket){
 			}
 send:
 			//to send setstation package here..
+			//Check validity
+			if(station_num < 0 || station_num >= total_station_num){
+				printf("The station you request doesn't exist! \n");
+				continue;
+			}
 			printf("Sending setstation request...You want to listen to the station [%d] ~\n", station_num);
 			struct SetStation ss_msg = {(uint8_t)1, (uint16_t)station_num};
 			int bytes_sent = send(sockfd,(void*)&ss_msg, sizeof(struct Hello),0);
