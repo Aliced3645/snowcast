@@ -18,6 +18,7 @@
 
 #define MAX_LENGTH 256
 #define MAX_BUFFER_SIZE 2000
+#define DEBUG
 
 //convert binary address to readable address (just within the client_info struct)
 char* convert_binary_addr_to_readable_addr(struct sockaddr binary_addr){
@@ -35,7 +36,9 @@ void* receive_thread_func(void* args){
 	int bytes_count;
 	struct sockaddr from;
 	socklen_t fromlen = sizeof(from);
-
+#ifdef DEBUG
+	printf("socketfd : %d\n",sockfd);
+#endif
 	while(1){
 		if( (bytes_count = recvfrom(sockfd,received_buffer, sizeof(received_buffer), 0, &from, &fromlen)) == -1)
 			printf("Error in receiving the data : %s\n", strerror(errno));
@@ -77,6 +80,11 @@ int main(int argc, char** argv)
 			close(sockfds[i]);
 			printf("Error in initializing socket: %s\n", strerror(errno));
 			exit(-1);
+		}
+
+		//bind..
+		if( bind(sockfds[i], addr_infos[i]->ai_addr, addr_infos[i]->ai_addrlen) == -1){
+			printf("Error in binding: %s\n", strerror(errno));
 		}
 	}
 	

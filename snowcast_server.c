@@ -421,8 +421,7 @@ void* sending_thread_func(void* args){
 			int actual_bytes;
 			if( (actual_bytes = sendto(sockfd,data, sizeof(data), 0, &dest_addr, sizeof(dest_addr))) == -1)
 					printf("An error occured when sending: %s\n", strerror(errno));
-			printf("%d bytes data sent", actual_bytes);
-			
+		//	printf("send data to %s:%d\n", info_traverser->client_readable_addr, info_traverser->client_udp_port);
 			info_traverser = info_traverser->next_client_info;
 		}
 	}
