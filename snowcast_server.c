@@ -412,17 +412,27 @@ void* sending_thread_func(void* args){
 	memset(data,8,512);
 	//just for testing udp
 	int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	
 	while(1){
-
+		char *port_str = (char*)malloc(10);
 		struct client_info* info_traverser = g_client_info_manager.first_client;
+		struct addrinfo hints;
+		memset(&hints, 0, sizeof(hints));
+		hints.ai_family = AF_INET;
+		hints.ai_socktype = SOCK_DGRAM;
+		struct addrinfo* client_addrinfo;
+		int nbytes, actual_bytes_sent, rv;
 		while(info_traverser != NULL){
 			struct sockaddr dest_addr = info_traverser->client_connect_addr;
-			int actual_bytes;
-			if( (actual_bytes = sendto(sockfd,data, sizeof(data), 0, &dest_addr, sizeof(dest_addr))) == -1)
-					printf("An error occured when sending: %s\n", strerror(errno));
-		//	printf("send data to %s:%d\n", info_traverser->client_readable_addr, info_traverser->client_udp_port);
+			nbytes = sprintf(port_str, "%d\0", info_traverser->client_udp_port);
+			if((rv = getaddrinfo(info_traverser->client_readable_addr, port_str, &hints, &client_addrinfo)) == -1){
+				printf("Error in getting addressinfo: %s...", strerror(errno));
+				exit(-1);
+			}
+			
+			if( (actual_bytes_sent = sendto(sockfd,data, sizeof(data), 0, client_addrinfo->ai_addr, client_addrinfo->ai_addrlen)) == -1)
+					printf("An error occured when sending: %s.\n  %s:%s\n", strerror(errno), info_traverser->client_readable_addr, port_str);
 			info_traverser = info_traverser->next_client_info;
+			memset(port_str,0,10);
 		}
 	}
 	return NULL;

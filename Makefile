@@ -1,6 +1,6 @@
 CC = gcc
 DEBUGFLAGS = -g -Wall
-CFLAGS = -D_REENTRANT $(DEBUGFLAGS) -D_XOPEN_SOURCE=500
+CFLAGS = -D_REENTRANT $(DEBUGFLAGS) -D_XOPEN_SOURCE=500 -lpthread
 LDFLAGS = -lpthread 
 
 all: snowcast_listener snowcast_control snowcast_server
