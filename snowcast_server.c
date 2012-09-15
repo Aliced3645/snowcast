@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define HELLO 0
 #define SET_STATION 1
@@ -406,6 +407,28 @@ void* listening_thread_func(void* args){
 }
 
 
+void* sending_thread_func(void* args){
+	void* data = malloc(512);
+	memset(data,8,512);
+	//just for testing udp
+	int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	
+	while(1){
+
+		struct client_info* info_traverser = g_client_info_manager.first_client;
+		while(info_traverser != NULL){
+			struct sockaddr dest_addr = info_traverser->client_connect_addr;
+			int actual_bytes;
+			if( (actual_bytes = sendto(sockfd,data, sizeof(data), 0, &dest_addr, sizeof(dest_addr))) == -1)
+					printf("An error occured when sending: %s\n", strerror(errno));
+			printf("%d bytes data sent", actual_bytes);
+			
+			info_traverser = info_traverser->next_client_info;
+		}
+	}
+	return NULL;
+}
+
 //this thread for simple user-interation.
 void* instruction_thread_func(void* param){
 	char input_msg[MAX_LENGTH];
@@ -531,6 +554,7 @@ int main(int argc, char** argv){
 	//create a single thread for listening tcp mesasges...
 	pthread_t listening_thread;
 	pthread_t instruction_thread;
+	pthread_t sending_thread;
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	pthread_attr_setstacksize(&attr, 20 * 1024 * 1024);
@@ -538,7 +562,7 @@ int main(int argc, char** argv){
 	lp->sockfds = sockfds;
 	pthread_create(&listening_thread, &attr, listening_thread_func, lp);
 	pthread_create(&instruction_thread, &attr, instruction_thread_func, NULL);
-	
+	pthread_create(&sending_thread, &attr, sending_thread_func, NULL);
 	pthread_join(instruction_thread,0);
 	pthread_join(listening_thread, 0);
 	
