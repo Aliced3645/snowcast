@@ -91,6 +91,7 @@ struct station_info_manager{
 
 struct station_info{
 	char* song_name;
+	int station_song_fd;
 	int station_num;
 	uint8_t current_progress; // decide whether to send an annnouce..
 	struct station_info* next_station_info;
@@ -511,16 +512,16 @@ void* listening_thread_func(void* args){
 						}
 					}
 					else if(msg_length == 0){
-						printf("A client [socket num: %d] has disconnected to the server..\n", client_sockfd);
+						pthread_mutex_lock(&g_client_info_manager.clients_mutex);					
 						close(client_sockfd);
-
 						FD_CLR(client_sockfd, &fd_list);
 						//delete a client_info..
 						if(delete_client_info(client_sockfd) == -1){
 							printf("An error occured when updating the client information list..\n");
 							exit(-1);
 						}	
-
+						printf("A client [socket num: %d] has disconnected to the server..\n", client_sockfd);
+						pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
 					}
 					else{ 
 					}
@@ -535,11 +536,11 @@ void* sending_thread_func(void* args){
 	void* data = malloc(512);
 	memset(data,8,512);
 	//just for testing udp
-	int count = 0;
 	int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	char *port_str = (char*)malloc(10);
 	memset(port_str,0,10);
 	while(1){
+		pthread_mutex_lock(&g_client_info_manager.clients_mutex);
 		struct client_info* info_traverser = g_client_info_manager.first_client;
 		struct addrinfo hints;
 		memset(&hints, 0, sizeof(hints));
@@ -557,13 +558,15 @@ void* sending_thread_func(void* args){
 				}
 				
 				if((actual_bytes_sent = sendto(sockfd,data, sizeof(data), 0, client_addrinfo->ai_addr, client_addrinfo->ai_addrlen)) == -1){
-						printf("An error occured when sending %dth: %s.\n  %s:%s\n", count,strerror(errno), info_traverser->client_readable_addr, port_str);
+						printf("An error occured when sending: %s.\n  %s:%s\n", strerror(errno), info_traverser->client_readable_addr, port_str);
 				}
-				count ++;
 				info_traverser = info_traverser->next_client_info;
 				memset(port_str,0,10);
 			}
 		}
+		pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
+
+		
 	}
 	return NULL;
 }
@@ -628,6 +631,8 @@ void* instruction_thread_func(void* param){
 		}
 	}
 }
+
+//thread for each station to send songs..
 
 int main(int argc, char** argv){
 	if(argc < 2){
@@ -695,7 +700,7 @@ int main(int argc, char** argv){
 	//create a single thread for listening tcp mesasges...
 	pthread_t listening_thread;
 	pthread_t instruction_thread;
-	//pthread_t sending_thread;
+	pthread_t sending_thread;
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	pthread_attr_setstacksize(&attr, 20 * 1024 * 1024);
@@ -704,7 +709,7 @@ int main(int argc, char** argv){
 	pthread_create(&listening_thread, &attr, listening_thread_func, lp);
 	pthread_create(&instruction_thread, &attr, instruction_thread_func, NULL);
 	//causing disconnect bug
-//	pthread_create(&sending_thread, &attr, sending_thread_func, NULL);
+	pthread_create(&sending_thread, &attr, sending_thread_func, NULL);
 	pthread_join(instruction_thread,0);
 	pthread_join(listening_thread, 0);
 	
