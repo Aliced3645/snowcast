@@ -37,13 +37,17 @@ void* receive_thread_func(void* args){
 	struct sockaddr from;
 	socklen_t fromlen = sizeof(from);
 #ifdef DEBUG
-	printf("socketfd : %d\n",sockfd);
+	//printf("socketfd : %d\n",sockfd);
 #endif
+	received_buffer = malloc(MAX_BUFFER_SIZE);
+	memset(received_buffer,0,MAX_BUFFER_SIZE);
 	while(1){
-		if( (bytes_count = recvfrom(sockfd,received_buffer, sizeof(received_buffer), 0, &from, &fromlen)) == -1)
+		if((bytes_count = recvfrom(sockfd,received_buffer, MAX_BUFFER_SIZE, 0, &from, &fromlen)) == -1)
 			printf("Error in receiving the data : %s\n", strerror(errno));
 		char* readable_addr = convert_binary_addr_to_readable_addr(from);
-		printf("Received %d bytes of data from %s\n", bytes_count, readable_addr);
+		//printf("Received %d bytes of data from %s\n", bytes_count, readable_addr);
+		//stdout received_buffer
+		write(STDOUT_FILENO, received_buffer, bytes_count);
 		free(readable_addr);
 		memset(received_buffer, 0, sizeof(received_buffer));
 	}
@@ -64,7 +68,7 @@ int main(int argc, char** argv)
 	char hostname[MAX_LENGTH];
 	size_t size = MAX_LENGTH;
 	gethostname(hostname, size);
-	printf("Listener host name: %s\n", hostname);
+	//printf("Listener host name: %s\n", hostname);
 	char* names[2]; // maybe from localhost, maybe from the internet...
 	names[0] = hostname;//network IP address
 	names[1] = NULL; //localhost loop

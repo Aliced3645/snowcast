@@ -13,6 +13,9 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/stat.h>
+#include <dirent.h>
+
 
 #define HELLO 0
 #define WELCOME 0
@@ -78,20 +81,34 @@ struct client_info{
 	int client_announced;
 };
 
+//manage songs for each station
+struct song_info;
+
+struct song_info_manager{
+	uint8_t song_total_number;
+	struct song_info* first_song;
+	struct song_info* last_song;
+};
+
+struct song_info{
+	char* song_name;
+	int song_fd;
+	struct song_info* next_song_info;
+};
+
 //manage information of station
 struct station_info;
 struct station_info_manager{
 	uint8_t station_total_number;
 	struct station_info* first_station;
 	struct station_info* last_station;
-
-	//mutex
 	pthread_mutex_t stations_mutex;
 };
 
 struct station_info{
 	char* song_name;
-	int station_song_fd;
+	struct song_info* current_song_info;
+	struct song_info_manager station_song_manager;
 	int station_num;
 	uint8_t current_progress; // decide whether to send an annnouce..
 	struct station_info* next_station_info;
@@ -636,7 +653,7 @@ void* instruction_thread_func(void* param){
 
 int main(int argc, char** argv){
 	if(argc < 2){
-		printf("Usage: snowcast_server tcpport [file1] [file2] [file3] [...] \n");
+		printf("Usage: snowcast_server tcpport [station_songs_folder1] [station_songs_folder2] [station_songs_folder3] [...] \n");
 		exit(-1);
 	}
 	total_station_num = argc - 2;
@@ -679,8 +696,10 @@ int main(int argc, char** argv){
 	//initialize the stations
 	pthread_mutex_lock(&g_station_info_manager.stations_mutex);
 	for(i = 0; i < total_station_num; i ++){
+
 		struct station_info* current_station = (struct station_info*)malloc(sizeof(struct station_info));
 		memset(current_station,0,sizeof(struct station_info));
+		//initialize songs..
 		current_station->song_name = argv[i+2];
 		current_station->station_num = i;
 		current_station->next_station_info = 0;

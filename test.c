@@ -13,11 +13,22 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <signal.h>
+#include <fcntl.h>
+
+//test the speed..
+const char* song_name = "mp3/Beethoven-SymphonyNo5.mp3";
+
+#define PACKAGE_SIZE 1500
 
 int main(int argc, char** argv)
 {
-	void* data = malloc(512);
-	memset(data,8,512);
+	int fd = open(song_name, O_RDONLY,NULL);
+	if(fd == -1){
+		printf("Error in opening song file : %s\n", strerror(errno));
+		exit(-1);
+	}
+	void* data = malloc(PACKAGE_SIZE);
+	memset(data,0, PACKAGE_SIZE);
 
 	int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	int rv;
@@ -31,12 +42,29 @@ int main(int argc, char** argv)
 			printf("Error in getting %s\n", strerror(errno));
 			exit(-1);
 	}
-
-	int actual_bytes;
+	
+	int package_loop_count = 0;
+	int actual_bytes_sent;
+	int actual_bytes_read;
 	while(1){
-		if( (actual_bytes = sendto(sockfd,data, sizeof(data), 0, targetinfo->ai_addr, targetinfo->ai_addrlen)) == -1)
-					printf("An error occured when sending: %s\n", strerror(errno));	
-		printf("send");
+		//record time here
+		while(package_loop_count != 16){
+			actual_bytes_read = read(fd, data, 1024);
+			printf("Actual Data length: %d\n", actual_bytes_read);
+			if(actual_bytes_read == -1){
+				printf("An error in reading mp3 file: %s\n", strerror(errno));
+				exit(0);
+			}
+			if(actual_bytes_read == 0){
+				exit(0);
+			}
+			if( (actual_bytes_sent = sendto(sockfd,data, actual_bytes_read, 0, targetinfo->ai_addr, targetinfo->ai_addrlen)) == -1)
+						printf("An error occured when sending: %s\n", strerror(errno));	
+			package_loop_count ++;
+		}
+		//record time here and sleep
+
+		printf("actual data sent: %d\n", actual_bytes_sent);
 	}
 	return 0;
 }
