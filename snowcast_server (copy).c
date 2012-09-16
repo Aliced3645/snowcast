@@ -60,9 +60,6 @@ struct client_info_manager{
 	uint8_t client_total_number;
 	struct client_info *first_client;
 	struct client_info *last_client;
-
-	//mutex
-	pthread_mutex_t clients_mutex;
 };
 
 struct client_info{
@@ -84,9 +81,6 @@ struct station_info_manager{
 	uint8_t station_total_number;
 	struct station_info* first_station;
 	struct station_info* last_station;
-
-	//mutex
-	pthread_mutex_t stations_mutex;
 };
 
 struct station_info{
@@ -97,13 +91,11 @@ struct station_info{
 	uint8_t client_total_number;
 	struct client_info* first_client;
 	struct client_info* last_client;
-	//mutex
-	pthread_mutex_t station_mutex;
 };
 
 //initialize the client info manager and station info manager..
-struct client_info_manager g_client_info_manager = {0, NULL, NULL, PTHREAD_MUTEX_INITIALIZER};
-struct station_info_manager g_station_info_manager = {0, NULL, NULL, PTHREAD_MUTEX_INITIALIZER};
+struct client_info_manager g_client_info_manager = {0, NULL, NULL};
+struct station_info_manager g_station_info_manager = {0, NULL, NULL};
 
 struct client_info* get_client_info_by_socket(int sockfd){
 	struct client_info* info_traverser = g_client_info_manager.first_client;
@@ -124,11 +116,6 @@ struct station_info* get_station_info_by_num(int num){
 		info_traverser = info_traverser->next_station_info;
 	}
 	return NULL;
-}
-
-struct station_info* get_station_info_by_client(struct client_info* current_client){
-	int station_num = current_client->client_station;
-	return get_station_info_by_num(station_num);
 }
 
 //add a client info to a station
@@ -296,7 +283,7 @@ void send_invalid_command(int client_sockfd, const char* command_string){
 	free(invalid_command);
 }
 
-int send_announce_command(int client_sockfd, const char* songname){
+void send_announce_command(int client_sockfd, const char* songname){
 	int string_length = strlen(songname);
 	int command_size = 2 * sizeof(uint8_t) + string_length;
 	struct Announce* announce_command = malloc(command_size);
@@ -319,9 +306,6 @@ int send_announce_command(int client_sockfd, const char* songname){
 		printf("Not all parts of the invalid command mesage are sent!");
 	}
 	free(announce_command);
-	if(bytes_sent == command_size)
-		bytes_sent = 1;
-	return bytes_sent;
 }
 
 
@@ -374,7 +358,6 @@ void* listening_thread_func(void* args){
 						continue;
 					}
 					else{
-						pthread_mutex_lock(&g_client_info_manager.clients_mutex);
 						FD_SET(client_sockfd, &fd_list);
 						if (client_sockfd > fd_max) 	
 								fd_max = client_sockfd;
@@ -395,7 +378,7 @@ void* listening_thread_func(void* args){
 							g_client_info_manager.last_client = new_client_info;
 						}
 						g_client_info_manager.client_total_number ++;
-						pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
+
 					}
 				}
 				//Receive control message from snowcast_control.
@@ -428,7 +411,6 @@ void* listening_thread_func(void* args){
 							target_client_info -> client_udp_port = clnt_udpport_h;
 							target_client_info -> client_station = -1;
 							target_client_info -> client_helloed = 1;
-							target_client_info -> client_announced = 1;
 							char* readable_addr = target_client_info->client_readable_addr;
 							printf("Received a hello! Connector from: [%s:%d]\n", readable_addr,clnt_udpport_h);
 							
@@ -443,12 +425,10 @@ void* listening_thread_func(void* args){
 								printf("NOT all contents of the Welcome message were sent..\n");
 							}
 							else if(bytes_sent == 0){
-								pthread_mutex_lock(&g_client_info_manager.clients_mutex);
 								printf("A connection ended..\n");
 								close(client_sockfd);
 								FD_CLR(client_sockfd, &fd_list);
 								delete_client_info(client_sockfd);
-								pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
 								continue;
 							}
 							//add the client into the channel management structure
@@ -460,10 +440,9 @@ void* listening_thread_func(void* args){
 							struct client_info* current_client =  get_client_info_by_socket(client_sockfd);
 
 							//see whether the setstation is set before the previous announce being received
-							if(current_client->client_announced == 0){
+							if(client_announced == 0){
 								printf("A SETSTAION was sent before the previoud announce being received from: [%s:%d]\n",current_client->client_readable_addr, current_client->client_udp_port);
-								send_invalid_command(client_sockfd, "The SETSTATION was sent before receiving the former ANNOUNCE!");
-								continue;
+
 							}
 							//decide if the station num is valid.
 							if(current_client->client_helloed == 0){
@@ -478,9 +457,7 @@ void* listening_thread_func(void* args){
 								sprintf(invalid_command_string,"Station %d does not exist", station_num);
 								send_invalid_command(client_sockfd,invalid_command_string);
 								continue;
-							}
-
-							current_client->client_announced = 0;	
+							}	
 							uint16_t former_station = current_client->client_station;
 							current_client->client_station = station_num;
 							uint16_t port_num = current_client->client_udp_port;
@@ -488,21 +465,11 @@ void* listening_thread_func(void* args){
 							printf("Received a SetStation! The client [%s:%d] turns to the station [%d]. \n", readable_addr, port_num, station_num);
 							//change the station
 							if(former_station != 65535){
-								struct station_info* to_lock = get_station_info_by_num(former_station);
-								pthread_mutex_lock(&to_lock->station_mutex);
 								delete_client_from_station(client_sockfd, former_station);
-								pthread_mutex_unlock(&to_lock->station_mutex);
 							}
-							struct station_info* to_lock = get_station_info_by_num(station_num);
-							pthread_mutex_lock(&to_lock->station_mutex);
-							add_client_to_station(client_sockfd, station_num);
-							pthread_mutex_unlock(&to_lock->station_mutex);			
+							add_client_to_station(client_sockfd, station_num);				
 							//send an announce
-							char announce_command_string[MAX_LENGTH];
-							sprintf(announce_command_string,"Successfully changed to station [%d]!", station_num);
-							int result = send_announce_command(client_sockfd, announce_command_string);
-							if(result == 1)
-								current_client->client_announced = 1;
+									
 						}
 						else{//unknown message
 							struct client_info* current_client = get_client_info_by_socket(client_sockfd);
@@ -556,7 +523,8 @@ void* sending_thread_func(void* args){
 					exit(-1);
 				}
 				
-				if((actual_bytes_sent = sendto(sockfd,data, sizeof(data), 0, client_addrinfo->ai_addr, client_addrinfo->ai_addrlen)) == -1){
+				if((actual_bytes_sent = sendto(sockfd,data, sizeof(data), 0, client_addrinfo->ai_addr, client_addrinfo->ai_addrlen)) == -1)
+				{
 						printf("An error occured when sending %dth: %s.\n  %s:%s\n", count,strerror(errno), info_traverser->client_readable_addr, port_str);
 				}
 				count ++;
@@ -672,14 +640,12 @@ int main(int argc, char** argv){
 	}
 	
 	//initialize the stations
-	pthread_mutex_lock(&g_station_info_manager.stations_mutex);
 	for(i = 0; i < total_station_num; i ++){
 		struct station_info* current_station = (struct station_info*)malloc(sizeof(struct station_info));
 		memset(current_station,0,sizeof(struct station_info));
 		current_station->song_name = argv[i+2];
 		current_station->station_num = i;
 		current_station->next_station_info = 0;
-		pthread_mutex_init(&current_station->station_mutex, NULL);
 		if(g_station_info_manager.station_total_number == 0){
 			g_station_info_manager.first_station = current_station;
 			g_station_info_manager.last_station = current_station;		
@@ -690,7 +656,6 @@ int main(int argc, char** argv){
 		}
 		g_station_info_manager.station_total_number ++;
 	}
-	pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
 	
 	//create a single thread for listening tcp mesasges...
 	pthread_t listening_thread;
@@ -711,19 +676,5 @@ int main(int argc, char** argv){
 	free(lp);
 	close(sockfds[1]);
 	close(sockfds[0]);
-
-	//free all station
-	while(g_station_info_manager.first_station != NULL){
-		struct station_info* to_delete = g_station_info_manager.first_station;
-		g_station_info_manager.first_station = to_delete->next_station_info;
-		free(to_delete);
-	}
-	//free all clients 
-	while(g_client_info_manager.first_client != NULL){
-		struct client_info* to_delete = g_client_info_manager.first_client;
-		g_client_info_manager.first_client = to_delete->next_client_info;
-		free(to_delete);
-	}
-
 	return 0;
 }

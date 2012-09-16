@@ -12,6 +12,10 @@
 
 //#define DEBUG
 
+#define REPLY_WELCOME 0
+#define REPLY_ANNOUNCE 1
+#define REPLY_INVALID_COMMAND 2
+
 #define MAX_LENGTH 256
 //define control messages here
 //cancel the allignment
@@ -25,6 +29,7 @@ struct SetStation{
 	uint8_t commandtype;
 	uint16_t stationNUmber;
 };
+
 #pragma pack(pop)
 
 int helloed = 0;
@@ -95,10 +100,6 @@ void* send_message_loop(void* socket){
 send:
 			//to send setstation package here..
 			//Check validity
-			if(station_num < 0 || station_num >= total_station_num){
-				printf("The station you request doesn't exist! \n");
-				continue;
-			}
 			printf("Sending setstation request...You want to listen to the station [%d] ~\n", station_num);
 			station_num = htons(station_num);
 			struct SetStation ss_msg = {(uint8_t)1, (uint16_t)station_num};
@@ -133,9 +134,9 @@ send:
 void* recv_message_loop(void* socket){
 	int sockfd = (int)socket;
 	int rv;
+	uint8_t* msg = (uint8_t*)malloc(MAX_LENGTH);
+	memset(msg,0,MAX_LENGTH);
 	while(1){
-		uint8_t* msg = (uint8_t*)malloc(MAX_LENGTH);
-		memset(msg,0,MAX_LENGTH);
 		//decide which type of msg is received
 		if( (rv = recv(sockfd, msg, MAX_LENGTH,0)) == -1){
 			printf("Error on receiving server messages : %s\n", strerror(errno));
@@ -148,14 +149,32 @@ void* recv_message_loop(void* socket){
 		else{
 			//parse the message received..
 			uint8_t msg_type = msg[0];
-			if(msg_type == (uint8_t)0){
+			if(msg_type == (uint8_t)REPLY_WELCOME){
 				uint16_t* num_station_p = (uint16_t*)(msg+1);
 				uint16_t num_station = ntohs(*num_station_p);
 				printf("\n> Welcome! There are %d music stations! Using set <num> to set station!\n> ", num_station);
+				total_station_num = num_station;
 			}
-			else if(msg_type == (uint8_t)1){
+
+			else if(msg_type == (uint8_t)REPLY_ANNOUNCE){//Announce
+				uint8_t string_length = msg[1];
+				char* command_charpart_pointer =  (char*)(((uint8_t*)msg)+2);
+				char* command_string = malloc(string_length);
+				memset(command_string,0,string_length);
+				memcpy(command_string, command_charpart_pointer, string_length);
+				printf("\n> Server Announcement: %s\n> ", command_string);
+				free(command_string);
 			}
-			else if(msg_type == (uint8_t)2){
+
+			else if(msg_type == (uint8_t)REPLY_INVALID_COMMAND){
+				//to analysis the command
+				uint8_t string_length = msg[1];
+				char* command_charpart_pointer = (char*)(((uint8_t*)msg)+2);
+				char* command_string = malloc(string_length);
+				memset(command_string,0,string_length);
+				memcpy(command_string, command_charpart_pointer, string_length);
+				printf("\n> Invalid Command: %s\n> ", command_string);
+				free(command_string);
 			}
 			else{
 				printf("Unrecoginizable message from the server\n");
