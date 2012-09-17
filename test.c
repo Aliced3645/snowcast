@@ -14,6 +14,8 @@
 #include <unistd.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <time.h>
+#include <sys/time.h>
 
 //test the speed..
 const char* song_name = "mp3/Beethoven-SymphonyNo5.mp3";
@@ -42,12 +44,15 @@ int main(int argc, char** argv)
 			printf("Error in getting %s\n", strerror(errno));
 			exit(-1);
 	}
-	
+	struct timeval tm;
 	int package_loop_count = 0;
 	int actual_bytes_sent;
 	int actual_bytes_read;
+	int time1, time2;
 	while(1){
 		//record time here
+		gettimeofday(&tm,NULL);
+		time1 = tm.tv_sec*1000000 + tm.tv_usec;
 		while(package_loop_count != 16){
 			actual_bytes_read = read(fd, data, 1024);
 			printf("Actual Data length: %d\n", actual_bytes_read);
@@ -61,10 +66,18 @@ int main(int argc, char** argv)
 			if( (actual_bytes_sent = sendto(sockfd,data, actual_bytes_read, 0, targetinfo->ai_addr, targetinfo->ai_addrlen)) == -1)
 						printf("An error occured when sending: %s\n", strerror(errno));	
 			package_loop_count ++;
+			printf("actual data sent: %d\n", actual_bytes_sent);
+
 		}
 		//record time here and sleep
-
-		printf("actual data sent: %d\n", actual_bytes_sent);
+		package_loop_count = 0;
+		gettimeofday(&tm, NULL);
+		time2 = tm.tv_sec*1000000 + tm.tv_usec ;
+		int time_elapsed = time2 - time1;
+		if(time_elapsed <= 1000000){
+			printf("Sleep\n");
+			usleep(1000000 - time_elapsed);
+		}	
 	}
 	return 0;
 }
