@@ -109,7 +109,9 @@ struct station_info_manager{
 };
 
 struct station_info{
-	char* song_name;
+	char* current_song_name;
+	char* songs_dir_name;
+	DIR* songs_dir;
 	struct song_info* current_song_info;
 	struct song_info_manager station_song_manager;
 	int station_num;
@@ -553,17 +555,32 @@ void* listening_thread_func(void* args){
 	}
 }
 
+//make full path..
+char* make_full_path(const char* dir, const char* song_name){
+	int length = strlen(dir) + strlen(song_name) + 2;
+	char* full_path_str = (char*)malloc(length);
+	memset(full_path_str, 0 , length);
+	strcpy(full_path_str, dir);
+	full_path_str[strlen(dir)] = '/';
+	strcpy(&full_path_str[strlen(dir)+1], song_name);
+	full_path_str[length] = '\0';
+	return full_path_str;
+
+}
+
 
 void* sending_thread_func(void* args){
 	int* station_num = ((int*)args);
 	printf("Station %d starts to send songs!\n", *station_num);
 	struct station_info* current_station = get_station_info_by_num(*station_num);
-	int fd = open(current_station->song_name, O_RDONLY, NULL);
+	char* full_path = make_full_path(current_station->songs_dir_name, current_station->current_song_name); 
+	int fd = open(full_path, O_RDONLY, NULL);
 	if(fd == -1){
 		printf("Error in opening song file in %d station: %s\n", *station_num, strerror(errno));
 		//exit(-1);
 		return;
 	}
+	free(full_path);
 	pthread_mutex_unlock(&station_num_lock);
 
 	void* data = malloc(PACKAGE_SIZE);
@@ -592,20 +609,33 @@ void* sending_thread_func(void* args){
 			actual_bytes_read = read(fd, data, 1024); //even no connections, still read!
 			if(actual_bytes_read == -1){
 				printf("An error in reading mp3 file: %s\n", strerror(errno));
-				exit(0);
+				exit(-1);
 			}
 			else if(actual_bytes_read == 0){
 				//Song ended. Announce here...
 				close(fd);
-				fd = open(current_station->song_name, O_RDONLY, NULL);
+				struct dirent* song_dirp = readdir(current_station->songs_dir);
 				pthread_mutex_lock(&current_station->station_mutex);
+			   	if(song_dirp == NULL){ //all songs played,restart from the start
+					if(closedir(current_station->songs_dir) < 0){
+						printf("Cannot close the dir\n");
+						exit(-1);
+					}
+					current_station->songs_dir =opendir(current_station->songs_dir_name);
+					song_dirp = readdir(current_station->songs_dir);					
+				}
+				current_station->current_song_name = song_dirp->d_name;
+				char* full_path = make_full_path(current_station->songs_dir_name, current_station->current_song_name); 
+				fd = open(full_path,O_RDONLY, NULL);
 				info_traverser = current_station->first_client;
 				while(info_traverser != NULL){
 					send_announce_command(info_traverser->client_sockfd, "The current song ended!");
 					info_traverser = info_traverser->station_next_client;		
 				}
+
 				pthread_mutex_unlock(&current_station->station_mutex);
 				package_loop_count = 16;
+				free(full_path);
 				continue;
 			}
 			pthread_mutex_lock(&current_station->station_mutex);
@@ -670,7 +700,7 @@ void* instruction_thread_func(void* param){
 			struct station_info* station_traverser = g_station_info_manager.first_station;
 			while(station_traverser != NULL){
 				uint8_t station_num = station_traverser->station_num;
-				char* song_name = station_traverser->song_name;
+				char* song_name = station_traverser->current_song_name;
 				uint8_t client_total_number = station_traverser->client_total_number;
 				printf("Station [%d]: Playing:[%s] | [%d] clients listening:\n", station_num, song_name, client_total_number);
 				struct client_info* client_traverser = station_traverser->first_client;
@@ -752,7 +782,20 @@ int main(int argc, char** argv){
 		struct station_info* current_station = (struct station_info*)malloc(sizeof(struct station_info));
 		memset(current_station,0,sizeof(struct station_info));
 		//initialize songs..
-		current_station->song_name = argv[i+2];
+		current_station->songs_dir = opendir(argv[i+2]);
+		if(current_station->songs_dir == NULL){
+			printf("Station %d has failed to load songs:%s\n", i, strerror(errno));
+			exit(-1);
+		}
+		struct dirent* song_dirp = readdir(current_station->songs_dir);
+		if(song_dirp == NULL){
+			printf("The songs directory for station %d has no song!\n", i);
+			exit(-1);
+		}
+		while(strcmp(song_dirp->d_name,".") == 0 || strcmp(song_dirp->d_name,"..") == 0)
+			song_dirp = readdir(current_station->songs_dir);
+		current_station->songs_dir_name = argv[i+2];
+		current_station->current_song_name = song_dirp->d_name;
 		current_station->station_num = i;
 		current_station->next_station_info = 0;
 		pthread_mutex_init(&current_station->station_mutex, NULL);
@@ -783,7 +826,7 @@ int main(int argc, char** argv){
 	struct station_info	* info_traverser = g_station_info_manager.first_station;
 	while(info_traverser != NULL){
 		pthread_mutex_lock(&station_num_lock);
-		int station_num = info_traverser->station_num;
+		volatile int station_num = info_traverser->station_num;
 		pthread_create(&info_traverser->sending_thread, &attr, sending_thread_func, (void*)&station_num);
 		info_traverser = info_traverser->next_station_info;
 	}
