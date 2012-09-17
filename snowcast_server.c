@@ -123,9 +123,12 @@ struct station_info{
 	pthread_t sending_thread;
 };
 
+
+
 //initialize the client info manager and station info manager..
 struct client_info_manager g_client_info_manager = {0, NULL, NULL, PTHREAD_MUTEX_INITIALIZER};
 struct station_info_manager g_station_info_manager = {0, NULL, NULL, PTHREAD_MUTEX_INITIALIZER};
+pthread_mutex_t station_num_lock = PTHREAD_MUTEX_INITIALIZER;
 
 struct client_info* get_client_info_by_socket(int sockfd){
 	struct client_info* info_traverser = g_client_info_manager.first_client;
@@ -473,8 +476,6 @@ void* listening_thread_func(void* args){
 								pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
 								continue;
 							}
-							//add the client into the channel management structure
-							//add_client_to_station(client_sockfd, 0);
 						}
 						else if(msg_type == (uint8_t)SET_STATION){
 							//receive a SetStation
@@ -521,7 +522,7 @@ void* listening_thread_func(void* args){
 							pthread_mutex_unlock(&to_lock->station_mutex);			
 							//send an announce
 							char announce_command_string[MAX_LENGTH];
-							sprintf(announce_command_string,"Successfully changed to station [%d]!", station_num);
+							sprintf(announce_command_string,"Successfully changed to station [%d]", station_num);
 							int result = send_announce_command(client_sockfd, announce_command_string);
 							if(result == 1)
 								current_client->client_announced = 1;
@@ -554,14 +555,17 @@ void* listening_thread_func(void* args){
 
 
 void* sending_thread_func(void* args){
-	int station_num = *((int*)args);
-	struct station_info* current_station = get_station_info_by_num(station_num);
+	int* station_num = ((int*)args);
+	printf("Station %d starts to send songs!\n", *station_num);
+	struct station_info* current_station = get_station_info_by_num(*station_num);
 	int fd = open(current_station->song_name, O_RDONLY, NULL);
 	if(fd == -1){
-		printf("Error in opening song file in %d station: %s\n", station_num, strerror(errno));
+		printf("Error in opening song file in %d station: %s\n", *station_num, strerror(errno));
 		//exit(-1);
 		return;
 	}
+	pthread_mutex_unlock(&station_num_lock);
+
 	void* data = malloc(PACKAGE_SIZE);
 	memset(data, 0, PACKAGE_SIZE);
 	//just for testing udp
@@ -573,19 +577,40 @@ void* sending_thread_func(void* args){
 	int actual_bytes_sent, actual_bytes_read;
 	int time1, time2;
 	while(1){
-		pthread_mutex_lock(&g_client_info_manager.clients_mutex);
-		struct client_info* info_traverser = g_client_info_manager.first_client;
+		//to be improved here
+		//usleep(10);
+		struct client_info* info_traverser = current_station->first_client;
 		struct addrinfo hints;
 		memset(&hints, 0, sizeof(hints));
 		hints.ai_family = AF_INET;
 		hints.ai_socktype = SOCK_DGRAM;
 		struct addrinfo* client_addrinfo;
 		int nbytes, rv;
-
 		gettimeofday(&tm,NULL);
 		time1 = tm.tv_sec*1000000 + tm.tv_usec;
-		while(package_loop_count != 16){
-			while(info_traverser != NULL){
+		while( package_loop_count != 16){
+			actual_bytes_read = read(fd, data, 1024); //even no connections, still read!
+			if(actual_bytes_read == -1){
+				printf("An error in reading mp3 file: %s\n", strerror(errno));
+				exit(0);
+			}
+			else if(actual_bytes_read == 0){
+				//Song ended. Announce here...
+				close(fd);
+				fd = open(current_station->song_name, O_RDONLY, NULL);
+				pthread_mutex_lock(&current_station->station_mutex);
+				info_traverser = current_station->first_client;
+				while(info_traverser != NULL){
+					send_announce_command(info_traverser->client_sockfd, "The current song ended!");
+					info_traverser = info_traverser->station_next_client;		
+				}
+				pthread_mutex_unlock(&current_station->station_mutex);
+				package_loop_count = 16;
+				continue;
+			}
+			pthread_mutex_lock(&current_station->station_mutex);
+			info_traverser = current_station->first_client;
+			while(info_traverser != NULL){					
 					if(info_traverser -> client_helloed == 1){
 					nbytes = sprintf(port_str, "%d", info_traverser->client_udp_port);
 					port_str[sizeof(port_str)] = '\0';
@@ -593,25 +618,17 @@ void* sending_thread_func(void* args){
 						printf("Error in getting addressinfo: %s...", strerror(errno));
 						exit(-1);
 					}
-					actual_bytes_read = read(fd, data, 1024);
-					if(actual_bytes_read == -1){
-						printf("An error in reading mp3 file: %s\n", strerror(errno));
-						exit(0);
-					}
-					else if(actual_bytes_read == 0){
-						//aexit(0);
-						//Announce here...
-					}
-
 					if((actual_bytes_sent = sendto(sockfd,data,actual_bytes_read, 0, client_addrinfo->ai_addr, client_addrinfo->ai_addrlen)) == -1){
 							printf("An error occured when sending: %s.\n  %s:%s\n", strerror(errno), info_traverser->client_readable_addr, port_str);
 					}
-					info_traverser = info_traverser->next_client_info;
+					info_traverser = info_traverser->station_next_client;
 					memset(port_str,0,10);
 				}
 			}
-			package_loop_count ++;
+			pthread_mutex_unlock(&current_station->station_mutex);
+			package_loop_count ++ ;
 		}
+
 		package_loop_count = 0;
 		gettimeofday(&tm, NULL);
 		time2 = tm.tv_sec*1000000 + tm.tv_usec ;
@@ -619,7 +636,9 @@ void* sending_thread_func(void* args){
 		if(time_elapsed <= 1000000){
 			usleep(1000000 - time_elapsed);
 		}
-		pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
+		else{
+			printf("The transmission rate cannot be ensured!\n");
+		}
 	}
 	return NULL;
 }
@@ -685,7 +704,6 @@ void* instruction_thread_func(void* param){
 	}
 }
 
-
 int main(int argc, char** argv){
 	if(argc < 2){
 		printf("Usage: snowcast_server tcpport [station_songs_folder1] [station_songs_folder2] [station_songs_folder3] [...] \n");
@@ -731,7 +749,6 @@ int main(int argc, char** argv){
 	//initialize the stations
 	pthread_mutex_lock(&g_station_info_manager.stations_mutex);
 	for(i = 0; i < total_station_num; i ++){
-
 		struct station_info* current_station = (struct station_info*)malloc(sizeof(struct station_info));
 		memset(current_station,0,sizeof(struct station_info));
 		//initialize songs..
@@ -765,8 +782,9 @@ int main(int argc, char** argv){
 	
 	struct station_info	* info_traverser = g_station_info_manager.first_station;
 	while(info_traverser != NULL){
+		pthread_mutex_lock(&station_num_lock);
 		int station_num = info_traverser->station_num;
-		pthread_create(&info_traverser->sending_thread, &attr, sending_thread_func, &station_num);
+		pthread_create(&info_traverser->sending_thread, &attr, sending_thread_func, (void*)&station_num);
 		info_traverser = info_traverser->next_station_info;
 	}
 
@@ -774,11 +792,11 @@ int main(int argc, char** argv){
 	pthread_join(instruction_thread,0);
 	pthread_join(listening_thread, 0);
 	pthread_join(sending_thread,0);
-	info_traverser = g_station_info_manager.first_station;
-	while(info_traverser != NULL){
-		pthread_join(info_traverser->sending_thread,0);
-		info_traverser = info_traverser -> next_station_info;
-	}
+//	info_traverser = g_station_info_manager.first_station;
+//	while(info_traverser != NULL){
+//		pthread_join(info_traverser->sending_thread,0);
+//		info_traverser = info_traverser -> next_station_info;
+//	}
 
 	free(lp);
 	close(sockfds[1]);

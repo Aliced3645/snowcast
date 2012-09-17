@@ -152,7 +152,7 @@ void* recv_message_loop(void* socket){
 			if(msg_type == (uint8_t)REPLY_WELCOME){
 				uint16_t* num_station_p = (uint16_t*)(msg+1);
 				uint16_t num_station = ntohs(*num_station_p);
-				printf("\n> Welcome! There are %d music stations! Using set <num> to set station!\n> ", num_station);
+				printf("\n> Welcome! There are %d music stations! Using [set <num>] instruction to set station!\n> ", num_station);
 				total_station_num = num_station;
 			}
 
