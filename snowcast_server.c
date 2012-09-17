@@ -15,7 +15,8 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <dirent.h>
-
+#include <fcntl.h>
+#include <sys/time.h>
 
 #define HELLO 0
 #define WELCOME 0
@@ -27,6 +28,8 @@
 
 #define MAX_LENGTH 256
 #define DEFAULT_STATION_NUM 2
+#define PACKAGE_SIZE 1500
+
 static uint16_t total_station_num = DEFAULT_STATION_NUM;
 fd_set fd_list, fd_list_temp;
 struct listen_param{
@@ -117,6 +120,7 @@ struct station_info{
 	struct client_info* last_client;
 	//mutex
 	pthread_mutex_t station_mutex;
+	pthread_t sending_thread;
 };
 
 //initialize the client info manager and station info manager..
@@ -550,12 +554,24 @@ void* listening_thread_func(void* args){
 
 
 void* sending_thread_func(void* args){
-	void* data = malloc(512);
-	memset(data,8,512);
+	int station_num = *((int*)args);
+	struct station_info* current_station = get_station_info_by_num(station_num);
+	int fd = open(current_station->song_name, O_RDONLY, NULL);
+	if(fd == -1){
+		printf("Error in opening song file in %d station: %s\n", station_num, strerror(errno));
+		//exit(-1);
+		return;
+	}
+	void* data = malloc(PACKAGE_SIZE);
+	memset(data, 0, PACKAGE_SIZE);
 	//just for testing udp
 	int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	char *port_str = (char*)malloc(10);
 	memset(port_str,0,10);
+	struct timeval tm;
+	int package_loop_count = 0;
+	int actual_bytes_sent, actual_bytes_read;
+	int time1, time2;
 	while(1){
 		pthread_mutex_lock(&g_client_info_manager.clients_mutex);
 		struct client_info* info_traverser = g_client_info_manager.first_client;
@@ -564,26 +580,46 @@ void* sending_thread_func(void* args){
 		hints.ai_family = AF_INET;
 		hints.ai_socktype = SOCK_DGRAM;
 		struct addrinfo* client_addrinfo;
-		int nbytes, actual_bytes_sent, rv;
-		while(info_traverser != NULL){
-				if(info_traverser -> client_helloed == 1){
-				nbytes = sprintf(port_str, "%d", info_traverser->client_udp_port);
-				port_str[sizeof(port_str)] = '\0';
-				if((rv = getaddrinfo(info_traverser->client_readable_addr, port_str, &hints, &client_addrinfo)) == -1){
-					printf("Error in getting addressinfo: %s...", strerror(errno));
-					exit(-1);
+		int nbytes, rv;
+
+		gettimeofday(&tm,NULL);
+		time1 = tm.tv_sec*1000000 + tm.tv_usec;
+		while(package_loop_count != 16){
+			while(info_traverser != NULL){
+					if(info_traverser -> client_helloed == 1){
+					nbytes = sprintf(port_str, "%d", info_traverser->client_udp_port);
+					port_str[sizeof(port_str)] = '\0';
+					if((rv = getaddrinfo(info_traverser->client_readable_addr, port_str, &hints, &client_addrinfo)) == -1){
+						printf("Error in getting addressinfo: %s...", strerror(errno));
+						exit(-1);
+					}
+					actual_bytes_read = read(fd, data, 1024);
+					if(actual_bytes_read == -1){
+						printf("An error in reading mp3 file: %s\n", strerror(errno));
+						exit(0);
+					}
+					else if(actual_bytes_read == 0){
+						//aexit(0);
+						//Announce here...
+					}
+
+					if((actual_bytes_sent = sendto(sockfd,data,actual_bytes_read, 0, client_addrinfo->ai_addr, client_addrinfo->ai_addrlen)) == -1){
+							printf("An error occured when sending: %s.\n  %s:%s\n", strerror(errno), info_traverser->client_readable_addr, port_str);
+					}
+					info_traverser = info_traverser->next_client_info;
+					memset(port_str,0,10);
 				}
-				
-				if((actual_bytes_sent = sendto(sockfd,data, sizeof(data), 0, client_addrinfo->ai_addr, client_addrinfo->ai_addrlen)) == -1){
-						printf("An error occured when sending: %s.\n  %s:%s\n", strerror(errno), info_traverser->client_readable_addr, port_str);
-				}
-				info_traverser = info_traverser->next_client_info;
-				memset(port_str,0,10);
 			}
+			package_loop_count ++;
+		}
+		package_loop_count = 0;
+		gettimeofday(&tm, NULL);
+		time2 = tm.tv_sec*1000000 + tm.tv_usec ;
+		int time_elapsed = time2 - time1;
+		if(time_elapsed <= 1000000){
+			usleep(1000000 - time_elapsed);
 		}
 		pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
-
-		
 	}
 	return NULL;
 }
@@ -649,7 +685,6 @@ void* instruction_thread_func(void* param){
 	}
 }
 
-//thread for each station to send songs..
 
 int main(int argc, char** argv){
 	if(argc < 2){
@@ -727,11 +762,24 @@ int main(int argc, char** argv){
 	lp->sockfds = sockfds;
 	pthread_create(&listening_thread, &attr, listening_thread_func, lp);
 	pthread_create(&instruction_thread, &attr, instruction_thread_func, NULL);
-	//causing disconnect bug
-	pthread_create(&sending_thread, &attr, sending_thread_func, NULL);
+	
+	struct station_info	* info_traverser = g_station_info_manager.first_station;
+	while(info_traverser != NULL){
+		int station_num = info_traverser->station_num;
+		pthread_create(&info_traverser->sending_thread, &attr, sending_thread_func, &station_num);
+		info_traverser = info_traverser->next_station_info;
+	}
+
+	//create 
 	pthread_join(instruction_thread,0);
 	pthread_join(listening_thread, 0);
-	
+	pthread_join(sending_thread,0);
+	info_traverser = g_station_info_manager.first_station;
+	while(info_traverser != NULL){
+		pthread_join(info_traverser->sending_thread,0);
+		info_traverser = info_traverser -> next_station_info;
+	}
+
 	free(lp);
 	close(sockfds[1]);
 	close(sockfds[0]);
