@@ -611,8 +611,8 @@ void* sending_thread_func(void* args){
 		int nbytes, rv;
 		gettimeofday(&tm,NULL);
 		time1 = tm.tv_sec*1000000 + tm.tv_usec;
-		while( package_loop_count != 16){
-			actual_bytes_read = read(fd, data, 1024); //even no connections, still read!
+		while( package_loop_count != 1024){
+			actual_bytes_read = read(fd, data, 16); //even no connections, still read!
 			if(actual_bytes_read == -1){
 				printf("An error in reading mp3 file: %s\n", strerror(errno));
 				exit(-1);
@@ -644,7 +644,7 @@ void* sending_thread_func(void* args){
 					info_traverser = info_traverser->station_next_client;		
 				}
 				pthread_mutex_unlock(&current_station->station_mutex);
-				package_loop_count = 16;
+				package_loop_count = 1024;
 	 			continue;
 			}
 			pthread_mutex_lock(&current_station->station_mutex);
@@ -666,8 +666,9 @@ void* sending_thread_func(void* args){
 			}
 			pthread_mutex_unlock(&current_station->station_mutex);
 			package_loop_count ++ ;
+			usleep(30);
 		}
-
+	
 		package_loop_count = 0;
 		gettimeofday(&tm, NULL);
 		time2 = tm.tv_sec*1000000 + tm.tv_usec ;
@@ -679,6 +680,7 @@ void* sending_thread_func(void* args){
 			printf("The transmission rate cannot be ensured!\n");
 		}
 	}
+	
 	return NULL;
 }
 
