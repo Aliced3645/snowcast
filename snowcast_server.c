@@ -614,6 +614,7 @@ void* sending_thread_func(void* args){
 			else if(actual_bytes_read == 0){
 				//Song ended. Announce here...
 				close(fd);
+				fd = 0;
 				struct dirent* song_dirp = readdir(current_station->songs_dir);
 				pthread_mutex_lock(&current_station->station_mutex);
 			   	if(song_dirp == NULL){ //all songs played,restart from the start
@@ -622,10 +623,32 @@ void* sending_thread_func(void* args){
 						exit(-1);
 					}
 					current_station->songs_dir =opendir(current_station->songs_dir_name);
-					song_dirp = readdir(current_station->songs_dir);					
+					song_dirp = readdir(current_station->songs_dir);
+					int found = 0;
+					while(found == 0){
+						if((strcmp(song_dirp->d_name,".") == 0) || (strcmp(song_dirp->d_name,"..")) == 0){
+							song_dirp = readdir(current_station->songs_dir);
+						}
+						else
+							found = 1;
+					}
 				}
+				else{
+					int found = 0;
+					while(found == 0){
+						if((strcmp(song_dirp->d_name,".") == 0) || (strcmp(song_dirp->d_name,"..")) == 0){
+							song_dirp = readdir(current_station->songs_dir);
+						}
+						else
+							found = 1;
+					}
+				}
+				
+				printf("song name: %s\n", current_station->current_song_name);
 				current_station->current_song_name = song_dirp->d_name;
 				char* full_path = make_full_path(current_station->songs_dir_name, current_station->current_song_name); 
+				//printf("full dir path: %s\n", full_path);
+
 				fd = open(full_path,O_RDONLY, NULL);
 				info_traverser = current_station->first_client;
 				while(info_traverser != NULL){
