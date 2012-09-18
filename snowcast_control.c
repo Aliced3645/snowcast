@@ -118,12 +118,19 @@ send:
 			
 		}
 		else if((strncmp(input_msg, "exit", 4) == 0) || (strncmp(input_msg, "quit", 4) == 0)){
-				printf("Thanks for using Snowcast!\n");
-				exit(0);
+			printf("Thanks for using Snowcast!\n");
+			exit(0);
 		}
+
+		//request for each station's playing songs..
+		else if(strncmp(input_msg, "p", 1) == 0){
+			
+		}
+
 		else{
 			printf("Cannot recognize your message! Please type again...\n");
 		}
+		
 
 		memset(input_msg, 0, MAX_LENGTH);
 		fflush(stdout);
