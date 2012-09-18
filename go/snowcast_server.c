@@ -566,27 +566,19 @@ char* make_full_path(const char* dir, const char* song_name){
 
 }
 
+
 void* sending_thread_func(void* args){
 	int* station_num = ((int*)args);
-	struct station_info* current_station = get_station_info_by_num(*station_num);
 	printf("Station %d starts to send songs!\n", *station_num);
-	const char* dir = current_station->songs_dir_name;
-	const char* song_name = current_station->current_song_info->song_name;
-	int length = strlen(current_station->songs_dir_name) + strlen(current_station->current_song_info->song_name) + 2;
-	char* full_path = (char*)malloc(MAX_LENGTH);
-	memset(full_path, 0 , MAX_LENGTH);
-	strcpy(full_path, dir);
-	full_path[strlen(dir)] = '/';
-	strcpy(&full_path[strlen(dir)+1], song_name);
-	full_path[length] = '\0';
-
+	struct station_info* current_station = get_station_info_by_num(*station_num);
+	char* full_path = make_full_path(current_station->songs_dir_name, current_station->current_song_info->song_name); 
 	int fd = open(full_path, O_RDONLY, NULL);
 	if(fd == -1){
 		printf("Error in opening song file in %d station: %s\n", *station_num, strerror(errno));
 		//exit(-1);
 		return;
 	}
-	//free(full_path);
+	free(full_path);
 	pthread_mutex_unlock(&station_num_lock);
 
 	void* data = malloc(PACKAGE_SIZE);
@@ -627,15 +619,7 @@ void* sending_thread_func(void* args){
 				else
 					current_station->current_song_info = current_station->current_song_info->next_song_info;
 				printf("song name: %s\n", current_station->current_song_info->song_name);
-				
-				const char* dir = current_station->songs_dir_name;
-				const char* song_name = current_station->current_song_info->song_name;
-				int length = strlen(current_station->songs_dir_name) + strlen(current_station->current_song_info->song_name) + 2;
-				memset(full_path, 0 , MAX_LENGTH);
-				strcpy(full_path, dir);
-				full_path[strlen(dir)] = '/';
-				strcpy(&full_path[strlen(dir)+1], song_name);
-				full_path[length] = '\0';
+				char* full_path = make_full_path(current_station->songs_dir_name, current_station->current_song_info->song_name); 
 
 				fd = open(full_path,O_RDONLY, NULL);
 				info_traverser = current_station->first_client;
@@ -643,9 +627,11 @@ void* sending_thread_func(void* args){
 					send_announce_command(info_traverser->client_sockfd, "The current song ended!");
 					info_traverser = info_traverser->station_next_client;		
 				}
+
 				pthread_mutex_unlock(&current_station->station_mutex);
 				package_loop_count = 16;
-	 			continue;
+				free(full_path);
+				continue;
 			}
 			pthread_mutex_lock(&current_station->station_mutex);
 			info_traverser = current_station->first_client;

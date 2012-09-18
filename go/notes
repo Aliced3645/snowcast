@@ -1,0 +1,32 @@
+
+client: snowcast_listener(udp) snowcast_control(tcp)
+server: snowcast_server
+
+snowcast_control <-> snowcast_server:
+	Hello <-> Welcome
+	SetStation <-> Announce
+
+server: for tcp and udp...How?
+Solution: 
+	1.Create a thread for listening connections...
+	2.For each song, these is one thread?
+
+
+for asynchronization method...
+
+Select may contains a set of files with events,
+then needs to iterate from 0 to max file discriptor to handle each file.
+##Done
+
+************************************
+The server should record the address of each client, and also their current channel
+
+address of client? from sockaddr to addr_info?
+
+##Done
+
+***************************************
+Now the problem is :
+1. UDP client will have to start to work.
+2. Manage channel structure.
+3. ntoh hton all not coded
