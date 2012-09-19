@@ -303,6 +303,75 @@ int delete_client_info(int client_sockfd){
 	return -1;
 }
 
+int send_announce_command(int client_sockfd, const char* songname);
+int delete_station(int station_num){
+	//send announce to all clients..
+	struct client_info* client_traverser = g_client_info_manager.first_client;
+	char msg[MAX_LENGTH];
+	while(client_traverser != NULL){
+		memset(msg,0,MAX_LENGTH);
+		sprintf(msg, "Remove station %d!", station_num);
+		send_announce_command(client_traverser->client_sockfd, msg);
+		client_traverser = client_traverser -> next_client_info;
+	}
+	struct station_info* current_station = get_station_info_by_num(station_num);
+	if(current_station == NULL){
+		printf("The station does not exist!\n");
+		return -1;
+	}
+	
+	client_traverser = current_station->first_client;
+	while(client_traverser != NULL){
+		memset(msg,0,MAX_LENGTH);
+		sprintf(msg, "The station you are listening will be deleted, please choose another staion!");
+		send_announce_command(client_traverser->client_sockfd, msg);
+		client_traverser -> client_station = -1;
+		client_traverser -> station_next_client = NULL;
+		client_traverser = client_traverser -> station_next_client;
+	}
+
+	//to delete the station
+	if(g_station_info_manager.station_total_number == 0)
+		return -1;	
+	if(g_client_info_manager.client_total_number == 1){
+		if(g_station_info_manager.first_station->station_num == station_num){
+			free(g_station_info_manager.first_station);
+			g_station_info_manager.station_total_number = 0;
+			total_station_num = 0;
+			g_station_info_manager.first_station = g_station_info_manager.last_station = 0;
+			return station_num;
+		}
+		else
+			return -1;
+	}
+	struct station_info* pre,*next;
+	pre = g_station_info_manager.first_station;
+	next = pre->next_station_info;
+	if(pre->station_num == station_num){
+		g_station_info_manager.station_total_number -- ;
+		total_station_num --;
+		g_station_info_manager.first_station = next;
+		free(pre);
+		return station_num;
+	}
+	while(next != 0){
+		if(next->station_num == station_num){
+			//if it is the last one to be deleted, then update the last_client
+			if(next == g_station_info_manager.last_station)
+				g_station_info_manager.last_station = pre;
+			pre->next_station_info = next->next_station_info;
+			g_station_info_manager.station_total_number --;
+			total_station_num --;
+			free(next);
+			return station_num;
+		}
+		next = next->next_station_info;
+		pre = pre->next_station_info;	
+	}
+
+	return -1;
+}
+
 int find_sockfd(int *fds, int target){
 	int size = sizeof(fds);
 	int i;
@@ -936,7 +1005,7 @@ void* instruction_thread_func(void* param){
 			current_station->songs_dir = opendir(dir);
 			if(current_station->songs_dir == NULL){
 				printf("Station %d has failed to load songs:%s\n", station_num, strerror(errno));
-				exit(-1);
+				continue;
 			}
 			struct dirent* song_dirp = readdir(current_station->songs_dir);
 			if(song_dirp == NULL){
@@ -1002,6 +1071,16 @@ void* instruction_thread_func(void* param){
 		//remove station
 		else if(instruction == 'r'){
 			//get the station number to be deleted
+			char* str = malloc(MAX_LENGTH);
+			strcpy(str, input_msg + 2);
+			printf("Wants to remove a station %s.\n", str);
+			char* last = 0;
+			int station_num = strtol(str, &last, 10);
+			if(delete_station(station_num) == -1){
+				printf("Delete Failed!\n");
+				continue;
+			}
+			
 		}
 	}
 }
