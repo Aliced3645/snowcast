@@ -33,10 +33,10 @@
 #define DEBUG
 
 #define MAX_LENGTH 256
-#define DEFAULT_STATION_NUM 2
+#define DEFAULT_STATION_NUM 0
 #define PACKAGE_SIZE 1500
 
-static uint16_t total_station_num = DEFAULT_STATION_NUM;
+static uint16_t total_station_num = 0;
 fd_set fd_list, fd_list_temp;
 struct listen_param{
 	int* sockfds;	
@@ -921,6 +921,80 @@ void* instruction_thread_func(void* param){
 				station_traverser = station_traverser->next_station_info;
 			}
 		}
+		//add station
+		else if(instruction == 'a'){
+			//get the added dir name
+			int station_num = g_station_info_manager.station_total_number;
+			pthread_mutex_lock(&g_station_info_manager.stations_mutex);
+			char* dir = malloc(MAX_LENGTH);
+			strcpy(dir, input_msg + 2);
+			printf("Wants to create a new station, using folder %s\n", dir);
+			struct station_info* current_station = (struct station_info*)malloc(sizeof(struct station_info));
+			memset(current_station,0,sizeof(struct station_info));
+			current_station->station_song_manager.song_total_number = 0;
+			//initialize songs..
+			current_station->songs_dir = opendir(dir);
+			if(current_station->songs_dir == NULL){
+				printf("Station %d has failed to load songs:%s\n", station_num, strerror(errno));
+				exit(-1);
+			}
+			struct dirent* song_dirp = readdir(current_station->songs_dir);
+			if(song_dirp == NULL){
+				printf("The songs directory for station %d has no song!\n", station_num);
+				exit(-1);
+			}
+			while(song_dirp != NULL){
+				if(strcmp(song_dirp->d_name,".") != 0 && strcmp(song_dirp->d_name,"..") != 0){
+					struct song_info* new_song_info = malloc(sizeof(struct song_info));
+					memset(new_song_info,0,sizeof(struct song_info));
+					new_song_info->song_name = (char*)malloc(MAX_LENGTH);
+					memset(new_song_info->song_name,0, MAX_LENGTH);
+					strcpy(new_song_info->song_name, song_dirp->d_name);
+					if(current_station->station_song_manager.song_total_number == 0){
+						current_station->station_song_manager.first_song = new_song_info;
+						current_station->station_song_manager.last_song = new_song_info;
+					}
+					else{
+						current_station->station_song_manager.last_song->next_song_info = new_song_info;
+						current_station->station_song_manager.last_song = new_song_info;
+					}
+					current_station->station_song_manager.song_total_number ++;
+				}
+				song_dirp = readdir(current_station->songs_dir);
+			}
+			current_station->songs_dir_name = dir;
+			current_station->current_song_info = current_station->station_song_manager.first_song;
+			current_station->station_num = g_station_info_manager.station_total_number++;
+			current_station->next_station_info = 0;
+			pthread_mutex_init(&current_station->station_mutex, NULL);
+			if(g_station_info_manager.station_total_number == 0){
+				g_station_info_manager.first_station = current_station;
+				g_station_info_manager.last_station = current_station;		
+			}
+			else{
+				g_station_info_manager.last_station -> next_station_info = current_station;
+				g_station_info_manager.last_station = current_station;
+			}
+			g_station_info_manager.station_total_number ++;
+			total_station_num ++;
+			pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
+			
+			//send to all
+			pthread_mutex_lock(&g_client_info_manager.clients_mutex);
+			struct client_info* traverser = g_client_info_manager.first_client;
+			while(traverser != NULL){
+				char command[MAX_LENGTH];
+				memset(command, 0, MAX_LENGTH);
+				sprintf(command, "A new station [%d] has been added .", station_num);
+				send_announce_command(traverser->client_sockfd, command);
+				traverser = traverser -> next_client_info;
+			}
+			pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
+		}
+		//remove station
+		else if(instruction == 'r'){
+			//get the station number to be deleted
+		}
 	}
 }
 
@@ -1016,9 +1090,9 @@ int main(int argc, char** argv){
 			g_station_info_manager.last_station = current_station;
 		}
 		g_station_info_manager.station_total_number ++;
+		total_station_num ++;
 	}
 	pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
-	
 	//create a single thread for listening tcp mesasges...
 	pthread_t listening_thread;
 	pthread_t instruction_thread;
