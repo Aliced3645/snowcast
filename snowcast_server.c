@@ -964,7 +964,7 @@ void* instruction_thread_func(void* param){
 			}
 			current_station->songs_dir_name = dir;
 			current_station->current_song_info = current_station->station_song_manager.first_song;
-			current_station->station_num = g_station_info_manager.station_total_number++;
+			current_station->station_num = g_station_info_manager.station_total_number;
 			current_station->next_station_info = 0;
 			pthread_mutex_init(&current_station->station_mutex, NULL);
 			if(g_station_info_manager.station_total_number == 0){
@@ -979,6 +979,14 @@ void* instruction_thread_func(void* param){
 			total_station_num ++;
 			pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
 			
+			//start station thread
+			pthread_t sending_thread;
+			pthread_attr_t attr;
+			pthread_attr_init(&attr);
+			pthread_attr_setstacksize(&attr, 20 * 1024 * 1024);
+			pthread_mutex_lock(&station_num_lock);
+			pthread_create(&current_station->sending_thread, &attr, sending_thread_func, (void*)&station_num);
+
 			//send to all
 			pthread_mutex_lock(&g_client_info_manager.clients_mutex);
 			struct client_info* traverser = g_client_info_manager.first_client;
