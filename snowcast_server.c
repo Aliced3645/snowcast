@@ -24,6 +24,12 @@
 #define SET_STATION 1
 #define INVALID_COMMAND 2
 
+#define REQUEST_ALL_STATIONS_PLAYING 3
+#define REPLY_ALL_SONGS_PLAYING 3
+#define REQUEST_PLAYLIST 4
+#define REPLY_PLAYLIST_HEADER 4
+#define REPLY_PLAYLIST_ITEM 5
+
 #define DEBUG
 
 #define MAX_LENGTH 256
@@ -58,6 +64,31 @@ struct InvalidCommand{
 	uint8_t replyStringSize;
 	char* replyString;
 };
+
+struct AllStationPlayingHeader{
+	uint8_t replyType;
+	uint8_t numString;
+};
+
+struct OneStationPlaying{
+	uint8_t replyType;
+	uint8_t index;
+	uint8_t replyStringSize;
+	char* replyString;
+};
+
+struct PlayListHeader{
+	uint8_t replyType;
+	uint8_t songsCount;
+	uint8_t stationNum;
+};
+
+struct PlayListItem{
+	uint8_t replyType;
+	uint8_t replyStringSize;
+	char* replyString;
+};
+
 #pragma pack(pop)
 
 //manage information data structure
@@ -349,6 +380,133 @@ int send_announce_command(int client_sockfd, const char* songname){
 	return bytes_sent;
 }
 
+int send_one_playing_song(int client_sockfd, int station_num){
+	struct station_info* current_station = get_station_info_by_num(station_num);
+	char* songname = current_station->current_song_info->song_name;
+	int string_length = strlen(songname);
+	int command_size = 3 * sizeof(uint8_t) + string_length+1;
+	struct OneStationPlaying* one_station_playing = malloc(command_size);
+	uint8_t* command_intpart_pointer = (uint8_t*)one_station_playing;
+	command_intpart_pointer[0] = (uint8_t)REPLY_ALL_SONGS_PLAYING;
+	command_intpart_pointer[1] = (uint8_t)station_num;
+	command_intpart_pointer[2] = (uint8_t)string_length + 1;
+	char* command_charpart_pointer = (char*)(((uint8_t*)one_station_playing) + 3);
+	memcpy(command_charpart_pointer, songname, string_length);
+	command_charpart_pointer[string_length] = '\0';
+	int bytes_sent = send(client_sockfd, (void*)one_station_playing, command_size,0);
+	if(bytes_sent == -1){
+		printf("An Error occured when sending a OneStationPlaying  message: %s\n", strerror(errno));
+	}
+	else if(bytes_sent == 0){
+		printf("A connection ended..\n");
+		close(client_sockfd);
+		FD_CLR(client_sockfd, &fd_list);
+		delete_client_info(client_sockfd);
+	}
+	else if(bytes_sent != command_size){
+		printf("Not all parts of the invalid command mesage are sent!");
+	}
+	free(one_station_playing);
+	if(bytes_sent == command_size)
+		bytes_sent = 1;
+	return bytes_sent;
+}
+
+int send_playing_songs(int client_sockfd){
+	struct AllStationPlayingHeader* header = malloc(sizeof(struct AllStationPlayingHeader));
+	memset(header, 0, sizeof(struct AllStationPlayingHeader));
+	header->replyType = REPLY_ALL_SONGS_PLAYING;
+	header->numString = total_station_num;
+	int bytes_sent = send(client_sockfd, (void*)header, sizeof(struct AllStationPlayingHeader), 0 );
+	if(bytes_sent == -1){
+		printf("An Error occured when sending a REPLY_ALL_SONGS_PLAYING message: %s\n", strerror(errno));
+	}
+	else if(bytes_sent == 0){
+		printf("A connection ended..\n");
+		close(client_sockfd);
+		FD_CLR(client_sockfd, &fd_list);
+		delete_client_info(client_sockfd);
+	}
+	else if(bytes_sent != sizeof(struct AllStationPlayingHeader)){
+		printf("Not all parts of the invalid command mesage are sent!");
+	}
+	free(header);
+	int i = 0;
+	for(i = 0; i < total_station_num; i ++){
+		usleep(100);
+		send_one_playing_song(client_sockfd, i);
+	}
+	bytes_sent = 1;
+	return bytes_sent;
+}
+
+int send_playlist_item(int client_sockfd, struct song_info* song){
+	char* songname = song->song_name;
+	int string_length = strlen(songname);
+	int command_size = 2 * sizeof(uint8_t) + string_length + 1;
+	struct PlayListItem* item = (struct PlayListItem*)malloc(command_size);
+	uint8_t* command_intpart_pointer = (uint8_t*)item;
+	command_intpart_pointer[0] = (uint8_t)REPLY_PLAYLIST_ITEM;
+	command_intpart_pointer[1] = (uint8_t)string_length + 1;
+	char* command_charpart_pointer = (char*)(((uint8_t*)item) + 2);
+	memcpy(command_charpart_pointer, songname, string_length);
+	command_charpart_pointer[string_length] = '\0';
+	int bytes_sent = send(client_sockfd, (void*)item, command_size,0);
+	if(bytes_sent == -1){
+		printf("An Error occured when sending a PlayListItem  message: %s\n", strerror(errno));
+	}
+	else if(bytes_sent == 0){
+		printf("A connection ended..\n");
+		close(client_sockfd);
+		FD_CLR(client_sockfd, &fd_list);
+		delete_client_info(client_sockfd);
+	}
+	else if(bytes_sent != command_size){
+		printf("Not all parts of the invalid command mesage are sent!");
+	}
+	free(item);
+	if(bytes_sent == command_size)
+		bytes_sent = 1;
+	return bytes_sent;
+}
+
+int send_playlist(int client_sockfd){
+	struct client_info* current_client = get_client_info_by_socket(client_sockfd);
+	struct PlayListHeader *header = malloc(sizeof(struct PlayListHeader));
+	memset(header, 0, sizeof(struct PlayListHeader));
+	header->replyType = REPLY_PLAYLIST_HEADER;
+	int station_num = current_client->client_station;
+	if(station_num == 65535){
+		send_announce_command(client_sockfd, "You are not in any station!");
+		return -1;
+	}
+	struct station_info* station = get_station_info_by_num(station_num);
+	header->songsCount = station->station_song_manager.song_total_number;
+	header->stationNum = station_num;
+	int bytes_sent = send(client_sockfd, (void*)header, sizeof(struct PlayListHeader), 0 );
+	if(bytes_sent == -1){
+		printf("An Error occured when sending a REPLY_PLAYLIST_HEADER message: %s\n", strerror(errno));
+	}
+	else if(bytes_sent == 0){
+		printf("A connection ended..\n");
+		close(client_sockfd);
+		FD_CLR(client_sockfd, &fd_list);
+		delete_client_info(client_sockfd);
+	}
+	else if(bytes_sent != sizeof(struct PlayListHeader)){
+		printf("Not all parts of the invalid command mesage are sent!");
+	}
+	free(header);
+	
+	struct song_info* traverser = station->station_song_manager.first_song;
+	while(traverser != NULL){
+		usleep(100);
+		send_playlist_item(client_sockfd, traverser);
+		traverser = traverser->next_song_info;	
+	}
+	bytes_sent = 1;
+	return bytes_sent;
+}
 
 //this thread may use select() to deal with connections.
 void* listening_thread_func(void* args){
@@ -526,6 +684,14 @@ void* listening_thread_func(void* args){
 							int result = send_announce_command(client_sockfd, announce_command_string);
 							if(result == 1)
 								current_client->client_announced = 1;
+						}
+						else if(msg_type == (uint8_t)REQUEST_ALL_STATIONS_PLAYING){
+							printf("A Client is requesting all music being played.\n");
+							send_playing_songs(client_sockfd);
+						}
+						else if(msg_type == (uint8_t)REQUEST_PLAYLIST){
+							printf("A Client is requesting playlist under his channel.\n");
+							send_playlist(client_sockfd);
 						}
 						else{//unknown message
 							struct client_info* current_client = get_client_info_by_socket(client_sockfd);

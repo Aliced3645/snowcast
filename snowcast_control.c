@@ -15,7 +15,11 @@
 #define REPLY_WELCOME 0
 #define REPLY_ANNOUNCE 1
 #define REPLY_INVALID_COMMAND 2
-
+#define REQUEST_ALL_STATIONS_PLAYING 3
+#define REPLY_ALL_SONGS_PLAYING 3
+#define REQUEST_PLAYLIST 4
+#define REPLY_PLAYLIST_HEADER 4
+#define REPLY_PLAYLIST_ITEM 5
 #define MAX_LENGTH 256
 //define control messages here
 //cancel the allignment
@@ -26,8 +30,18 @@ struct Hello{
 };
 
 struct SetStation{
-	uint8_t commandtype;
-	uint16_t stationNUmber;
+	uint8_t commandType;
+	uint16_t stationNumber;
+};
+
+struct ReqStationPlaying{
+	uint8_t commandType;
+	uint16_t pack;
+};
+
+struct ReqStationPlaylist{
+	uint8_t commandType;
+	uint16_t pack;
 };
 
 #pragma pack(pop)
@@ -123,8 +137,29 @@ send:
 		}
 
 		//request for each station's playing songs..
+		else if(strncmp(input_msg, "s", 1) == 0){
+			struct ReqStationPlaying rsp_msg = {(uint8_t)REQUEST_ALL_STATIONS_PLAYING, (uint16_t)0};	
+			int bytes_sent = send(sockfd,(void*)&rsp_msg, sizeof(struct ReqStationPlaying),0);
+			if(bytes_sent == -1){
+				printf("An error occured when sending a REQUEST_ALL_STATIONS_PLAYING message: %s\n", strerror(errno));
+				exit(-1);
+			}
+			else if(bytes_sent != 3){
+				printf("NOT all contents of the mesasge is sent...\n");
+				return 0;
+			}
+		}
 		else if(strncmp(input_msg, "p", 1) == 0){
-			
+			struct ReqStationPlaying rsp_msg = {(uint8_t)REQUEST_PLAYLIST, (uint16_t)0};	
+			int bytes_sent = send(sockfd,(void*)&rsp_msg, sizeof(struct ReqStationPlaying),0);
+			if(bytes_sent == -1){
+				printf("An error occured when sending a REQUEST_PLAYLIST message: %s\n", strerror(errno));
+				exit(-1);
+			}
+			else if(bytes_sent != 3){
+				printf("NOT all contents of the mesasge is sent...\n");
+				return 0;
+			}
 		}
 
 		else{
@@ -181,6 +216,37 @@ void* recv_message_loop(void* socket){
 				memset(command_string,0,string_length);
 				memcpy(command_string, command_charpart_pointer, string_length);
 				printf("\n> Invalid Command: %s\n> ", command_string);
+				free(command_string);
+			}
+			else if(msg_type == (uint8_t)REPLY_ALL_SONGS_PLAYING){
+				//receive, display...
+				uint8_t index_or_total = msg[1];
+				if(index_or_total == total_station_num){
+					printf("Here is the playing information of all %d channels.\n> ", total_station_num);	
+				}
+				else if(index_or_total < total_station_num){
+					int index = index_or_total;
+					int string_length = msg[2];
+					char* command_charpart_pointer = (char*)(((uint8_t*)msg)+3);
+					char* command_string = malloc(string_length);
+					memset(command_string, 0, string_length);
+					memcpy(command_string, command_charpart_pointer, string_length);
+					printf("Station %d is playing: \n\t %s\n> ", index, command_string);
+					free(command_string);
+				}
+			}
+			else if(msg_type == (uint8_t)REPLY_PLAYLIST_HEADER){
+				int total = msg[1];
+				int station_num = msg[2];
+				printf("There are %d songs in the station [%d]'s playlist!\n> ", total, station_num);
+			}
+			else if(msg_type == (uint8_t)REPLY_PLAYLIST_ITEM){
+				uint8_t string_length = msg[1];
+				char* command_charpart_pointer =  (char*)(((uint8_t*)msg)+2);
+				char* command_string = malloc(string_length);
+				memset(command_string,0,string_length);
+				memcpy(command_string, command_charpart_pointer, string_length);
+				printf("\t Song name: %s\n> ", command_string);
 				free(command_string);
 			}
 			else{
