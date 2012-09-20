@@ -304,6 +304,19 @@ int delete_client_info(int client_sockfd){
 	return -1;
 }
 
+void print_all_station(){
+	struct station_info* station_traverser = g_station_info_manager.first_station;
+		while(station_traverser != NULL){
+			printf("Station %d has %d songs in the playlist.\n",station_traverser->station_num, station_traverser->station_song_manager.song_total_number);
+				struct song_info* song_traverser = station_traverser->station_song_manager.first_song;
+				while(song_traverser!= NULL){
+					printf("\tSong name: %s\n", song_traverser->song_name);
+					song_traverser = song_traverser -> next_song_info;
+				}
+				station_traverser = station_traverser->next_station_info;
+			}
+}
+
 int send_announce_command(int client_sockfd, const char* songname);
 int delete_station(int station_num){
 	//send announce to all clients..
@@ -323,6 +336,7 @@ int delete_station(int station_num){
 		printf("The station does not exist!\n");
 		return -1;
 	}
+
 	client_traverser = g_client_info_manager.first_client;
 	while(client_traverser != NULL){
 		if(client_traverser->client_station == station_num){
@@ -344,7 +358,7 @@ int delete_station(int station_num){
 			printf("0 Stations!\n");
 			return -1;	
 	}
-	if(g_client_info_manager.client_total_number == 1){
+	if(g_station_info_manager.station_total_number == 1){
 		if(g_station_info_manager.first_station->station_num == station_num){
 			//pthread_cancel(g_station_info_manager.first_station -> sending_thread);
 			free(g_station_info_manager.first_station);
@@ -363,10 +377,8 @@ int delete_station(int station_num){
 	pre = g_station_info_manager.first_station;
 	next = pre->next_station_info;
 	if(pre->station_num == station_num){
-		//pthread_cancel(pre->sending_thread);
 		g_station_info_manager.station_total_number -- ;
 		g_station_info_manager.first_station = next;
-		pre->next_station_info = 0;
 		free(pre);
 		pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
 		return station_num;

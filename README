@@ -14,6 +14,11 @@ snowcast_server:
 			 's' : To display all songs for each station.( Including all songs to be played )
 			 'a [songs dir path]' : To dynamically add one station with songs in the dir path.
 			 'r [station number]' : To dynamically remove one station with the specified station number.
+			For crucial problems, the server will exist and report what error it encouters.
 
-	Design: There are mainly three working threads in the server program.
+	Design: 
+			Data Structure: 
+				To maintain all informations, there exists mainly four types of linked lists.First is a global linked list which manage all client informations, the header is called client_info_manager, each client is represented as a client_info structure. The global linked list links all conneted clients, and records all their IP address, Port information, station number, etc. 
+							
+
 		
