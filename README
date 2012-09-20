@@ -1,0 +1,19 @@
+Snowcast Readme - By Shu Zhang (szhang)
+
+snowcast_server:
+
+	Usage: To start the server, we can type: snowcast_server [listening port] [songs dir path 1] [songs dir path 2] ... [songs dir path n]
+		   Each songs dir path corresponds to a station, containing all songs to be played. DO NOT INCLUDE THE LAST '/' IN THE PATH. 
+		   For example, we can type: [./snowcast_server 8080 ./mp3_1 ./mp3_2] to start the server.
+
+		   When having started the server, the server supports some command line input for extended functions.
+		   Type:
+		  	 'c' : To display all connected clients information.(IP Address, port, listening stations)
+			 'p' : To display all stations with the songs they are playing and clients connected to them.
+			 'q' : To exit the server program.
+			 's' : To display all songs for each station.( Including all songs to be played )
+			 'a [songs dir path]' : To dynamically add one station with songs in the dir path.
+			 'r [station number]' : To dynamically remove one station with the specified station number.
+
+	Design: There are mainly three working threads in the server program.
+		

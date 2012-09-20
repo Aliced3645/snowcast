@@ -26,6 +26,7 @@
 
 #define REQUEST_ALL_STATIONS_PLAYING 3
 #define REPLY_ALL_SONGS_PLAYING 3
+#define REPLY_STATION_SONGS_PLAYING 6
 #define REQUEST_PLAYLIST 4
 #define REPLY_PLAYLIST_HEADER 4
 #define REPLY_PLAYLIST_ITEM 5
@@ -36,7 +37,7 @@
 #define DEFAULT_STATION_NUM 2
 #define PACKAGE_SIZE 1500
 
-static uint16_t total_station_num = DEFAULT_STATION_NUM;
+static int largest_station_num = 0;
 fd_set fd_list, fd_list_temp;
 struct listen_param{
 	int* sockfds;	
@@ -189,7 +190,7 @@ struct station_info* get_station_info_by_client(struct client_info* current_clie
 
 //add a client info to a station
 int add_client_to_station(int client_sockfd, int station_num){
-	if(station_num < 0 || station_num >= total_station_num){
+	if(station_num < 0 || station_num > largest_station_num){
 		printf("Failure in adding the client to the station\n");
 		return -1;
 	}
@@ -306,7 +307,11 @@ int delete_client_info(int client_sockfd){
 int send_announce_command(int client_sockfd, const char* songname);
 int delete_station(int station_num){
 	//send announce to all clients..
+	pthread_mutex_lock(&g_client_info_manager.clients_mutex);
 	struct client_info* client_traverser = g_client_info_manager.first_client;
+	struct station_info* current_station = get_station_info_by_num(station_num);
+	pthread_mutex_unlock(&current_station -> station_mutex);
+	pthread_cancel(current_station -> sending_thread);
 	char msg[MAX_LENGTH];
 	while(client_traverser != NULL){
 		memset(msg,0,MAX_LENGTH);
@@ -314,61 +319,77 @@ int delete_station(int station_num){
 		send_announce_command(client_traverser->client_sockfd, msg);
 		client_traverser = client_traverser -> next_client_info;
 	}
-	struct station_info* current_station = get_station_info_by_num(station_num);
 	if(current_station == NULL){
 		printf("The station does not exist!\n");
 		return -1;
 	}
-	
-	client_traverser = current_station->first_client;
+	client_traverser = g_client_info_manager.first_client;
 	while(client_traverser != NULL){
-		memset(msg,0,MAX_LENGTH);
-		sprintf(msg, "The station you are listening will be deleted, please choose another staion!");
-		send_announce_command(client_traverser->client_sockfd, msg);
-		client_traverser -> client_station = -1;
-		client_traverser -> station_next_client = NULL;
-		client_traverser = client_traverser -> station_next_client;
+		if(client_traverser->client_station == station_num){
+			memset(msg,0,MAX_LENGTH);
+			usleep(100);
+			sprintf(msg, "The station you are listening will be deleted, please choose another staion!");
+			send_announce_command(client_traverser->client_sockfd, msg);
+			client_traverser -> client_station = -1;
+			client_traverser -> station_next_client = NULL;
+		}
+		client_traverser = client_traverser -> next_client_info;
 	}
-
+	pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
 	//to delete the station
-	if(g_station_info_manager.station_total_number == 0)
-		return -1;	
+	usleep(100);
+	pthread_mutex_lock(&g_station_info_manager.stations_mutex);
+	if(g_station_info_manager.station_total_number == 0){
+			pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
+			printf("0 Stations!\n");
+			return -1;	
+	}
 	if(g_client_info_manager.client_total_number == 1){
 		if(g_station_info_manager.first_station->station_num == station_num){
+			//pthread_cancel(g_station_info_manager.first_station -> sending_thread);
 			free(g_station_info_manager.first_station);
-			g_station_info_manager.station_total_number = 0;
-			total_station_num = 0;
+			g_station_info_manager.station_total_number = 0; 
 			g_station_info_manager.first_station = g_station_info_manager.last_station = 0;
+			pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
 			return station_num;
 		}
-		else
+		else{
+			pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
+			printf("Didn't find the station!\n");
 			return -1;
+		}
 	}
 	struct station_info* pre,*next;
 	pre = g_station_info_manager.first_station;
 	next = pre->next_station_info;
 	if(pre->station_num == station_num){
+		//pthread_cancel(pre->sending_thread);
 		g_station_info_manager.station_total_number -- ;
-		total_station_num --;
 		g_station_info_manager.first_station = next;
+		pre->next_station_info = 0;
 		free(pre);
+		pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
 		return station_num;
 	}
 	while(next != 0){
 		if(next->station_num == station_num){
 			//if it is the last one to be deleted, then update the last_client
+			//pthread_cancel(next->sending_thread);
 			if(next == g_station_info_manager.last_station)
 				g_station_info_manager.last_station = pre;
 			pre->next_station_info = next->next_station_info;
 			g_station_info_manager.station_total_number --;
-			total_station_num --;
+			next->first_client = next->last_client = 0;
+			next->next_station_info = 0;
 			free(next);
+			pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
 			return station_num;
 		}
 		next = next->next_station_info;
 		pre = pre->next_station_info;	
 	}
-
+	pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
+	printf("Didn't find the station!\n");
 	return -1;
 }
 
@@ -423,13 +444,15 @@ void send_invalid_command(int client_sockfd, const char* command_string){
 
 int send_announce_command(int client_sockfd, const char* songname){
 	int string_length = strlen(songname);
-	int command_size = 2 * sizeof(uint8_t) + string_length;
+	int command_size = 2 * sizeof(uint8_t) + string_length + 1;
 	struct Announce* announce_command = malloc(command_size);
+	memset(announce_command,0,command_size);
 	uint8_t* command_intpart_pointer = (uint8_t*)announce_command;
 	command_intpart_pointer[0] = (uint8_t)ANNOUNCE;
-	command_intpart_pointer[1] = (uint8_t)string_length;
+	command_intpart_pointer[1] = (uint8_t)string_length + 1;
 	char* command_charpart_pointer = (char*)(((uint8_t*)announce_command) + 2);
-	memcpy(command_charpart_pointer, songname, string_length);
+	memcpy(command_charpart_pointer, songname, string_length + 1);
+	command_charpart_pointer[string_length] = '\0';
 	int bytes_sent = send(client_sockfd,(void*)announce_command, command_size, 0);
 	if(bytes_sent == -1){
 		printf("An Error occured when sending a ANNOUNCE message: %s\n", strerror(errno));
@@ -451,12 +474,14 @@ int send_announce_command(int client_sockfd, const char* songname){
 
 int send_one_playing_song(int client_sockfd, int station_num){
 	struct station_info* current_station = get_station_info_by_num(station_num);
+	if(current_station == NULL)
+		return -1;
 	char* songname = current_station->current_song_info->song_name;
 	int string_length = strlen(songname);
 	int command_size = 3 * sizeof(uint8_t) + string_length+1;
 	struct OneStationPlaying* one_station_playing = malloc(command_size);
 	uint8_t* command_intpart_pointer = (uint8_t*)one_station_playing;
-	command_intpart_pointer[0] = (uint8_t)REPLY_ALL_SONGS_PLAYING;
+	command_intpart_pointer[0] = (uint8_t)REPLY_STATION_SONGS_PLAYING;
 	command_intpart_pointer[1] = (uint8_t)station_num;
 	command_intpart_pointer[2] = (uint8_t)string_length + 1;
 	char* command_charpart_pointer = (char*)(((uint8_t*)one_station_playing) + 3);
@@ -482,10 +507,11 @@ int send_one_playing_song(int client_sockfd, int station_num){
 }
 
 int send_playing_songs(int client_sockfd){
+	pthread_mutex_lock(&g_station_info_manager.stations_mutex);
 	struct AllStationPlayingHeader* header = malloc(sizeof(struct AllStationPlayingHeader));
 	memset(header, 0, sizeof(struct AllStationPlayingHeader));
 	header->replyType = REPLY_ALL_SONGS_PLAYING;
-	header->numString = total_station_num;
+	header->numString = g_station_info_manager.station_total_number;
 	int bytes_sent = send(client_sockfd, (void*)header, sizeof(struct AllStationPlayingHeader), 0 );
 	if(bytes_sent == -1){
 		printf("An Error occured when sending a REPLY_ALL_SONGS_PLAYING message: %s\n", strerror(errno));
@@ -500,12 +526,14 @@ int send_playing_songs(int client_sockfd){
 		printf("Not all parts of the invalid command mesage are sent!");
 	}
 	free(header);
-	int i = 0;
-	for(i = 0; i < total_station_num; i ++){
+	struct station_info* traverser = g_station_info_manager.first_station;
+	while(traverser != NULL){
 		usleep(100);
-		send_one_playing_song(client_sockfd, i);
+		send_one_playing_song(client_sockfd, traverser->station_num);
+		traverser = traverser -> next_station_info;
 	}
 	bytes_sent = 1;
+	pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
 	return bytes_sent;
 }
 
@@ -546,7 +574,7 @@ int send_playlist(int client_sockfd){
 	header->replyType = REPLY_PLAYLIST_HEADER;
 	int station_num = current_client->client_station;
 	if(station_num == 65535){
-		send_announce_command(client_sockfd, "You are not in any station!");
+		send_announce_command(client_sockfd, "You are not in any station.");
 		return -1;
 	}
 	struct station_info* station = get_station_info_by_num(station_num);
@@ -685,7 +713,7 @@ void* listening_thread_func(void* args){
 							printf("Received a hello! Connector from: [%s:%d]\n", readable_addr,clnt_udpport_h);
 							
 							//respond to the hello here	
-							uint16_t station_num = htons(total_station_num);
+							uint16_t station_num = htons(g_station_info_manager.station_total_number);
 							struct Welcome wl_msg = {(uint8_t)0, station_num};
 							int bytes_sent = send(client_sockfd,(void*)&wl_msg, sizeof(struct Welcome), 0);
 							if(bytes_sent == -1){
@@ -721,7 +749,7 @@ void* listening_thread_func(void* args){
 								send_invalid_command(client_sockfd, "Hello command must be sent first!");
 								continue;
 							}
-							if(station_num >= total_station_num){
+							if(station_num > largest_station_num){
 								printf("Received a invalid SETSTATION request from [%s:%d]\n", current_client->client_readable_addr, current_client->client_udp_port);
 								char invalid_command_string[MAX_LENGTH];
 								memset(invalid_command_string, 0, MAX_LENGTH);
@@ -760,7 +788,9 @@ void* listening_thread_func(void* args){
 						}
 						else if(msg_type == (uint8_t)REQUEST_PLAYLIST){
 							printf("A Client is requesting playlist under his channel.\n");
-							send_playlist(client_sockfd);
+							if(send_playlist(client_sockfd) == -1){
+								continue;
+							}
 						}
 						else{//unknown message
 							struct client_info* current_client = get_client_info_by_socket(client_sockfd);
@@ -780,7 +810,9 @@ void* listening_thread_func(void* args){
 						printf("A client [socket num: %d] has disconnected to the server..\n", client_sockfd);
 						pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
 					}
-					else{ 
+					else{
+						printf("Unrecognizable Message!\n");
+						exit(-1);
 					}
 				}
 			}
@@ -804,6 +836,10 @@ char* make_full_path(const char* dir, const char* song_name){
 void* sending_thread_func(void* args){
 	int* station_num = ((int*)args);
 	struct station_info* current_station = get_station_info_by_num(*station_num);
+	if(current_station == NULL){
+		printf("Unable to find station :.\n");
+		exit(-1);
+	}
 	printf("Station %d starts to send songs!\n", *station_num);
 	const char* dir = current_station->songs_dir_name;
 	const char* song_name = current_station->current_song_info->song_name;
@@ -814,12 +850,10 @@ void* sending_thread_func(void* args){
 	full_path[strlen(dir)] = '/';
 	strcpy(&full_path[strlen(dir)+1], song_name);
 	full_path[length] = '\0';
-
 	int fd = open(full_path, O_RDONLY, NULL);
 	if(fd == -1){
 		printf("Error in opening song file in %d station: %s\n", *station_num, strerror(errno));
-		//exit(-1);
-		return;
+		exit(-1);
 	}
 	//free(full_path);
 	pthread_mutex_unlock(&station_num_lock);
@@ -871,7 +905,6 @@ void* sending_thread_func(void* args){
 				full_path[strlen(dir)] = '/';
 				strcpy(&full_path[strlen(dir)+1], song_name);
 				full_path[length] = '\0';
-
 				fd = open(full_path,O_RDONLY, NULL);
 				info_traverser = current_station->first_client;
 				while(info_traverser != NULL){
@@ -921,9 +954,10 @@ void* sending_thread_func(void* args){
 
 //this thread for simple user-interation.
 void* instruction_thread_func(void* param){
-	char input_msg[MAX_LENGTH];
+	char *input_msg = malloc(MAX_LENGTH);
 	memset(input_msg, 0, MAX_LENGTH);
 	while(1){
+		memset(input_msg, 0, MAX_LENGTH);
 		fgets(input_msg, MAX_LENGTH, stdin);
 		if( (strlen(input_msg) > 0) && (input_msg[strlen(input_msg) - 1] == '\n'))
 			input_msg[strlen(input_msg) - 1] = '\0';
@@ -993,7 +1027,7 @@ void* instruction_thread_func(void* param){
 		//add station
 		else if(instruction == 'a'){
 			//get the added dir name
-			int station_num = g_station_info_manager.station_total_number;
+			int station_num = largest_station_num + 1;
 			pthread_mutex_lock(&g_station_info_manager.stations_mutex);
 			char* dir = malloc(MAX_LENGTH);
 			strcpy(dir, input_msg + 2);
@@ -1005,7 +1039,7 @@ void* instruction_thread_func(void* param){
 			current_station->songs_dir = opendir(dir);
 			if(current_station->songs_dir == NULL){
 				printf("Station %d has failed to load songs:%s\n", station_num, strerror(errno));
-				continue;
+				exit(0);
 			}
 			struct dirent* song_dirp = readdir(current_station->songs_dir);
 			if(song_dirp == NULL){
@@ -1033,7 +1067,7 @@ void* instruction_thread_func(void* param){
 			}
 			current_station->songs_dir_name = dir;
 			current_station->current_song_info = current_station->station_song_manager.first_song;
-			current_station->station_num = g_station_info_manager.station_total_number;
+			current_station->station_num = station_num;
 			current_station->next_station_info = 0;
 			pthread_mutex_init(&current_station->station_mutex, NULL);
 			if(g_station_info_manager.station_total_number == 0){
@@ -1045,17 +1079,15 @@ void* instruction_thread_func(void* param){
 				g_station_info_manager.last_station = current_station;
 			}
 			g_station_info_manager.station_total_number ++;
-			total_station_num ++;
+			largest_station_num ++;
 			pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
 			
 			//start station thread
-			pthread_t sending_thread;
 			pthread_attr_t attr;
 			pthread_attr_init(&attr);
 			pthread_attr_setstacksize(&attr, 20 * 1024 * 1024);
 			pthread_mutex_lock(&station_num_lock);
 			pthread_create(&current_station->sending_thread, &attr, sending_thread_func, (void*)&station_num);
-
 			//send to all
 			pthread_mutex_lock(&g_client_info_manager.clients_mutex);
 			struct client_info* traverser = g_client_info_manager.first_client;
@@ -1078,11 +1110,15 @@ void* instruction_thread_func(void* param){
 			int station_num = strtol(str, &last, 10);
 			if(delete_station(station_num) == -1){
 				printf("Delete Failed!\n");
-				continue;
+				exit(-1);
 			}
-			
+			fflush(stdout);
+		}
+		else{
+			printf("what!?\n");
 		}
 	}
+	printf("what!?\n");
 }
 
 int main(int argc, char** argv){
@@ -1090,7 +1126,7 @@ int main(int argc, char** argv){
 		printf("Usage: snowcast_server tcpport [station_songs_folder1] [station_songs_folder2] [station_songs_folder3] [...] \n");
 		exit(-1);
 	}
-	total_station_num = argc - 2;
+	largest_station_num = argc - 2 - 1;
 	
 	char* server_port = argv[1];
 	//one for local loop, the other for actual network stocket.
@@ -1129,7 +1165,7 @@ int main(int argc, char** argv){
 	
 	//initialize the stations
 	pthread_mutex_lock(&g_station_info_manager.stations_mutex);
-	for(i = 0; i < total_station_num; i ++){
+	for(i = 0; i <=largest_station_num; i ++){
 		struct station_info* current_station = (struct station_info*)malloc(sizeof(struct station_info));
 		memset(current_station,0,sizeof(struct station_info));
 		current_station->station_song_manager.song_total_number = 0;
@@ -1183,7 +1219,6 @@ int main(int argc, char** argv){
 	//create a single thread for listening tcp mesasges...
 	pthread_t listening_thread;
 	pthread_t instruction_thread;
-	pthread_t sending_thread;
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	pthread_attr_setstacksize(&attr, 20 * 1024 * 1024);
@@ -1200,10 +1235,8 @@ int main(int argc, char** argv){
 		info_traverser = info_traverser->next_station_info;
 	}
 
-	//create 
 	pthread_join(instruction_thread,0);
 	pthread_join(listening_thread, 0);
-	pthread_join(sending_thread,0);
 
 	free(lp);
 	close(sockfds[1]);

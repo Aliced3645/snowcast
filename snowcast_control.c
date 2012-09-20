@@ -20,6 +20,7 @@
 #define REQUEST_PLAYLIST 4
 #define REPLY_PLAYLIST_HEADER 4
 #define REPLY_PLAYLIST_ITEM 5
+#define REPLY_STATION_SONGS_PLAYING 6
 #define MAX_LENGTH 256
 //define control messages here
 //cancel the allignment
@@ -224,8 +225,9 @@ void* recv_message_loop(void* socket){
 				if(index_or_total == total_station_num){
 					printf("Here is the playing information of all %d channels.\n> ", total_station_num);	
 				}
-				else if(index_or_total < total_station_num){
-					int index = index_or_total;
+			}
+			else if(msg_type == (uint8_t)REPLY_STATION_SONGS_PLAYING){
+					int index = msg[1];
 					int string_length = msg[2];
 					char* command_charpart_pointer = (char*)(((uint8_t*)msg)+3);
 					char* command_string = malloc(string_length);
@@ -233,8 +235,8 @@ void* recv_message_loop(void* socket){
 					memcpy(command_string, command_charpart_pointer, string_length);
 					printf("Station %d is playing: \n\t %s\n> ", index, command_string);
 					free(command_string);
-				}
 			}
+
 			else if(msg_type == (uint8_t)REPLY_PLAYLIST_HEADER){
 				int total = msg[1];
 				int station_num = msg[2];
