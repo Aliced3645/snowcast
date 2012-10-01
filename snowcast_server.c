@@ -265,6 +265,7 @@ int delete_client_info(int client_sockfd){
 		if(g_client_info_manager.first_client->client_sockfd == client_sockfd){
 			if(delete_client_from_station(g_client_info_manager.first_client->client_sockfd, g_client_info_manager.first_client->client_station) == -1)
 				return -1;
+			FD_CLR(g_client_info_manager.first_client->client_sockfd, &fd_list);
 			free(g_client_info_manager.first_client->client_readable_addr);
 			free(g_client_info_manager.first_client);
 			g_client_info_manager.client_total_number = 0;
@@ -282,6 +283,7 @@ int delete_client_info(int client_sockfd){
 		g_client_info_manager.client_total_number -- ;
 		g_client_info_manager.first_client = next;
 		free(pre->client_readable_addr);
+		FD_CLR(pre->client_sockfd, &fd_list);
 		free(pre);
 		return client_sockfd;
 	}
@@ -294,6 +296,7 @@ int delete_client_info(int client_sockfd){
 			pre->next_client_info = next->next_client_info;
 			g_client_info_manager.client_total_number --;
 			free(next->client_readable_addr);
+			FD_CLR(pre->client_sockfd, &fd_list);
 			free(next);
 			return client_sockfd;
 		}
@@ -304,6 +307,27 @@ int delete_client_info(int client_sockfd){
 	return -1;
 }
 
+void garbage_collection(){
+		while(g_station_info_manager.first_station != NULL){
+		struct station_info* to_delete = g_station_info_manager.first_station;
+		pthread_cancel(to_delete->sending_thread);
+		while(to_delete->station_song_manager.first_song != NULL){
+			struct song_info* to_delete_song = to_delete->station_song_manager.first_song;
+			free(to_delete_song->song_name);
+			to_delete->station_song_manager.first_song = to_delete_song->next_song_info;
+			free(to_delete_song);
+		}
+		g_station_info_manager.first_station = to_delete->next_station_info;
+		free(to_delete);
+	}
+
+	//free all clients 
+	while(g_client_info_manager.first_client != NULL){
+		struct client_info* to_delete = g_client_info_manager.first_client;
+		g_client_info_manager.first_client = to_delete->next_client_info;
+		free(to_delete);
+	}
+}
 void print_all_station(){
 	struct station_info* station_traverser = g_station_info_manager.first_station;
 		while(station_traverser != NULL){
@@ -360,7 +384,15 @@ int delete_station(int station_num){
 	}
 	if(g_station_info_manager.station_total_number == 1){
 		if(g_station_info_manager.first_station->station_num == station_num){
-			//pthread_cancel(g_station_info_manager.first_station -> sending_thread);
+			pthread_cancel(g_station_info_manager.first_station -> sending_thread);
+			struct station_info* to_delete = g_station_info_manager.first_station;
+			while(to_delete->station_song_manager.first_song != NULL){
+				struct song_info* to_delete_song = to_delete->station_song_manager.first_song;
+				free(to_delete_song->song_name);
+				to_delete->station_song_manager.first_song = to_delete_song->next_song_info;
+				free(to_delete_song);
+			}
+			closedir(g_station_info_manager.first_station->songs_dir);
 			free(g_station_info_manager.first_station);
 			g_station_info_manager.station_total_number = 0; 
 			g_station_info_manager.first_station = g_station_info_manager.last_station = 0;
@@ -377,8 +409,17 @@ int delete_station(int station_num){
 	pre = g_station_info_manager.first_station;
 	next = pre->next_station_info;
 	if(pre->station_num == station_num){
+		pthread_cancel(pre->sending_thread);
+		struct station_info* to_delete = pre;
+		while(to_delete->station_song_manager.first_song != NULL){
+			struct song_info* to_delete_song = to_delete->station_song_manager.first_song;
+			free(to_delete_song->song_name);
+			to_delete->station_song_manager.first_song = to_delete_song->next_song_info;
+			free(to_delete_song);
+		}
 		g_station_info_manager.station_total_number -- ;
 		g_station_info_manager.first_station = next;
+		closedir(pre->songs_dir);
 		free(pre);
 		pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
 		return station_num;
@@ -386,13 +427,21 @@ int delete_station(int station_num){
 	while(next != 0){
 		if(next->station_num == station_num){
 			//if it is the last one to be deleted, then update the last_client
-			//pthread_cancel(next->sending_thread);
+			pthread_cancel(next->sending_thread);
+			struct station_info* to_delete = next;
+			while(to_delete->station_song_manager.first_song != NULL){
+				struct song_info* to_delete_song = to_delete->station_song_manager.first_song;
+				free(to_delete_song->song_name);
+				to_delete->station_song_manager.first_song = to_delete_song->next_song_info;
+				free(to_delete_song);
+			}
 			if(next == g_station_info_manager.last_station)
 				g_station_info_manager.last_station = pre;
 			pre->next_station_info = next->next_station_info;
 			g_station_info_manager.station_total_number --;
 			next->first_client = next->last_client = 0;
 			next->next_station_info = 0;
+			closedir(next->songs_dir);
 			free(next);
 			pthread_mutex_unlock(&g_station_info_manager.stations_mutex);
 			return station_num;
@@ -619,8 +668,8 @@ int send_playlist(int client_sockfd){
 
 //this thread may use select() to deal with connections.
 void* listening_thread_func(void* args){
-	struct listen_param* lp = (struct listen_param*)args;
-	int *server_sockfds = lp->sockfds;
+	//struct listen_param* lp = (struct listen_param*)args;
+	int *server_sockfds = (int*)args;
 	
 	int fd_max = server_sockfds[0];
 	FD_ZERO(&fd_list);
@@ -644,7 +693,6 @@ void* listening_thread_func(void* args){
 	}
 
 	while(1){
-		//check..whether song has been ended
 		fd_list_temp = fd_list;
 		if((rv = select(fd_max +1 , &fd_list_temp, NULL, NULL, &tv)) == -1 ){
 			printf("An error occured when calling select..: %s\n", strerror(errno));
@@ -769,6 +817,16 @@ void* listening_thread_func(void* args){
 								send_invalid_command(client_sockfd,invalid_command_string);
 								continue;
 							}
+							
+							struct station_info* to_lock = get_station_info_by_num(station_num);
+							if(to_lock == NULL){
+								printf("Received a invalid SETSTATION request from [%s:%d]\n", current_client->client_readable_addr, current_client->client_udp_port);
+								char invalid_command_string[MAX_LENGTH];
+								memset(invalid_command_string, 0, MAX_LENGTH);
+								sprintf(invalid_command_string,"Station %d does not exist", station_num);
+								send_invalid_command(client_sockfd,invalid_command_string);
+								continue;
+							}
 
 							current_client->client_announced = 0;	
 							uint16_t former_station = current_client->client_station;
@@ -783,8 +841,7 @@ void* listening_thread_func(void* args){
 								delete_client_from_station(client_sockfd, former_station);
 								pthread_mutex_unlock(&to_lock->station_mutex);
 							}
-							struct station_info* to_lock = get_station_info_by_num(station_num);
-							pthread_mutex_lock(&to_lock->station_mutex);
+														pthread_mutex_lock(&to_lock->station_mutex);
 							add_client_to_station(client_sockfd, station_num);
 							pthread_mutex_unlock(&to_lock->station_mutex);			
 							//send an announce
@@ -867,14 +924,15 @@ void* sending_thread_func(void* args){
 		printf("Error in opening song file in %d station: %s\n", *station_num, strerror(errno));
 		exit(-1);
 	}
-	//free(full_path);
+	free(full_path);
 	pthread_mutex_unlock(&station_num_lock);
 
-	void* data = malloc(PACKAGE_SIZE);
+	char data[PACKAGE_SIZE];
+	//void* data = malloc(PACKAGE_SIZE);
 	memset(data, 0, PACKAGE_SIZE);
 	//just for testing udp
 	int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	char *port_str = (char*)malloc(10);
+	char port_str[10];
 	memset(port_str,0,10);
 	struct timeval tm;
 	int package_loop_count = 0;
@@ -882,7 +940,6 @@ void* sending_thread_func(void* args){
 	int time1, time2;
 	while(1){
 		//to be improved here
-		//usleep(10);
 		struct client_info* info_traverser = current_station->first_client;
 		struct addrinfo hints;
 		memset(&hints, 0, sizeof(hints));
@@ -892,8 +949,8 @@ void* sending_thread_func(void* args){
 		int nbytes, rv;
 		gettimeofday(&tm,NULL);
 		time1 = tm.tv_sec*1000000 + tm.tv_usec;
-		while( package_loop_count != 1024){
-			actual_bytes_read = read(fd, data, 16); //even no connections, still read!
+		while( package_loop_count != 16){
+			actual_bytes_read = read(fd, data, 1024); //even no connections, still read!
 			if(actual_bytes_read == -1){
 				printf("An error in reading mp3 file: %s\n", strerror(errno));
 				exit(-1);
@@ -924,7 +981,7 @@ void* sending_thread_func(void* args){
 					info_traverser = info_traverser->station_next_client;		
 				}
 				pthread_mutex_unlock(&current_station->station_mutex);
-				package_loop_count = 1024;
+				package_loop_count = 16;
 	 			continue;
 			}
 			pthread_mutex_lock(&current_station->station_mutex);
@@ -940,13 +997,14 @@ void* sending_thread_func(void* args){
 					if((actual_bytes_sent = sendto(sockfd,data,actual_bytes_read, 0, client_addrinfo->ai_addr, client_addrinfo->ai_addrlen)) == -1){
 							printf("An error occured when sending: %s.\n  %s:%s\n", strerror(errno), info_traverser->client_readable_addr, port_str);
 					}
+					free(client_addrinfo);
 					info_traverser = info_traverser->station_next_client;
 					memset(port_str,0,10);
 				}
 			}
 			pthread_mutex_unlock(&current_station->station_mutex);
 			package_loop_count ++ ;
-			usleep(30);
+			//usleep(50000);
 		}
 	
 		package_loop_count = 0;
@@ -1006,22 +1064,8 @@ void* instruction_thread_func(void* param){
 			}
 		}
 		else if(instruction == 'q'){
-			//release all structure objects
-			while(g_client_info_manager.client_total_number != 0){
-				//delete all client info
-				struct client_info* to_delete = g_client_info_manager.first_client;
-				g_client_info_manager.first_client = to_delete->next_client_info;
-				g_client_info_manager.client_total_number --;
-				free(to_delete);
-			}
-			while(g_station_info_manager.station_total_number != 0){
-				//delete all station info
-				struct station_info* to_delete = g_station_info_manager.first_station;
-				g_station_info_manager.first_station = to_delete->next_station_info;
-				g_station_info_manager.station_total_number --;
-				free(to_delete);
-			}
-			exit(0);
+			free(input_msg);
+			return NULL;
 		}
 		//print station's playlist
 		else if(instruction == 's'){
@@ -1041,7 +1085,8 @@ void* instruction_thread_func(void* param){
 			//get the added dir name
 			int station_num = largest_station_num + 1;
 			pthread_mutex_lock(&g_station_info_manager.stations_mutex);
-			char* dir = malloc(MAX_LENGTH);
+			//char* dir = malloc(MAX_LENGTH);
+			char dir[MAX_LENGTH];
 			strcpy(dir, input_msg + 2);
 			printf("Wants to create a new station, using folder %s\n", dir);
 			struct station_info* current_station = (struct station_info*)malloc(sizeof(struct station_info));
@@ -1111,6 +1156,7 @@ void* instruction_thread_func(void* param){
 				traverser = traverser -> next_client_info;
 			}
 			pthread_mutex_unlock(&g_client_info_manager.clients_mutex);
+			//free(dir);
 		}
 		//remove station
 		else if(instruction == 'r'){
@@ -1125,6 +1171,7 @@ void* instruction_thread_func(void* param){
 				exit(-1);
 			}
 			fflush(stdout);
+			free(str);
 		}
 		else{
 			printf("what!?\n");
@@ -1234,11 +1281,12 @@ int main(int argc, char** argv){
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	pthread_attr_setstacksize(&attr, 20 * 1024 * 1024);
-	struct listen_param* lp = (struct listen_param*)malloc(sizeof(struct listen_param));
-	lp->sockfds = sockfds;
-	pthread_create(&listening_thread, &attr, listening_thread_func, lp);
+	//struct listen_param* lp = (struct listen_param*)malloc(sizeof(struct listen_param));
+	//lp->sockfds = sockfds;
+	pthread_create(&listening_thread, &attr, listening_thread_func, sockfds);
 	pthread_create(&instruction_thread, &attr, instruction_thread_func, NULL);
 	
+
 	struct station_info	* info_traverser = g_station_info_manager.first_station;
 	while(info_traverser != NULL){
 		pthread_mutex_lock(&station_num_lock);
@@ -1248,24 +1296,34 @@ int main(int argc, char** argv){
 	}
 
 	pthread_join(instruction_thread,0);
-	pthread_join(listening_thread, 0);
-
-	free(lp);
+	pthread_cancel(listening_thread);
 	close(sockfds[1]);
 	close(sockfds[0]);
+
 
 	//free all station
 	while(g_station_info_manager.first_station != NULL){
 		struct station_info* to_delete = g_station_info_manager.first_station;
+		pthread_cancel(to_delete->sending_thread);
+		while(to_delete->station_song_manager.first_song != NULL){
+			struct song_info* to_delete_song = to_delete->station_song_manager.first_song;
+			free(to_delete_song->song_name);
+			to_delete->station_song_manager.first_song = to_delete_song->next_song_info;
+			free(to_delete_song);
+		}
 		g_station_info_manager.first_station = to_delete->next_station_info;
+		closedir(to_delete->songs_dir);
 		free(to_delete);
 	}
+
 	//free all clients 
 	while(g_client_info_manager.first_client != NULL){
 		struct client_info* to_delete = g_client_info_manager.first_client;
 		g_client_info_manager.first_client = to_delete->next_client_info;
+		free(to_delete->client_readable_addr);
 		free(to_delete);
 	}
-
+	free(servinfos[0]);
+	free(servinfos[1]);
 	return 0;
 }

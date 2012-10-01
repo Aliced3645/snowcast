@@ -304,7 +304,6 @@ int main(int argc, char** argv){
 	pthread_create(&sending_thread, NULL, send_message_loop, (void*)sockfd);
 	pthread_create(&recving_thread, NULL, recv_message_loop, (void*)sockfd);
 	pthread_join(sending_thread, 0);
-	pthread_join(recving_thread, 0);
 
 	freeaddrinfo(servinfo);
 	return 0;
