@@ -200,7 +200,9 @@ void* recv_message_loop(void* socket){
 			}
 
 			else if(msg_type == (uint8_t)REPLY_ANNOUNCE){//Announce
-				uint8_t string_length = msg[1];
+				uint16_t string_length = (uint16_t)msg[1];
+                                //string_length = ntohs(string_length);
+                                printf("String length: %d\n", string_length);
 				char* command_charpart_pointer =  (char*)(((uint8_t*)msg)+2);
 				char* command_string = malloc(string_length);
 				memset(command_string,0,string_length);
@@ -212,6 +214,7 @@ void* recv_message_loop(void* socket){
 			else if(msg_type == (uint8_t)REPLY_INVALID_COMMAND){
 				//to analysis the command
 				uint8_t string_length = msg[1];
+                                //string_length = ntohs(string_length);
 				char* command_charpart_pointer = (char*)(((uint8_t*)msg)+2);
 				char* command_string = malloc(string_length);
 				memset(command_string,0,string_length);

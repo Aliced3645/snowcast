@@ -308,17 +308,17 @@ int delete_client_info(int client_sockfd){
 }
 
 void garbage_collection(){
-		while(g_station_info_manager.first_station != NULL){
-		struct station_info* to_delete = g_station_info_manager.first_station;
-		pthread_cancel(to_delete->sending_thread);
-		while(to_delete->station_song_manager.first_song != NULL){
-			struct song_info* to_delete_song = to_delete->station_song_manager.first_song;
-			free(to_delete_song->song_name);
-			to_delete->station_song_manager.first_song = to_delete_song->next_song_info;
-			free(to_delete_song);
-		}
-		g_station_info_manager.first_station = to_delete->next_station_info;
-		free(to_delete);
+	while(g_station_info_manager.first_station != NULL){
+	struct station_info* to_delete = g_station_info_manager.first_station;
+	pthread_cancel(to_delete->sending_thread);
+	while(to_delete->station_song_manager.first_song != NULL){
+		struct song_info* to_delete_song = to_delete->station_song_manager.first_song;
+		free(to_delete_song->song_name);
+		to_delete->station_song_manager.first_song = to_delete_song->next_song_info;
+		free(to_delete_song);
+	}
+	g_station_info_manager.first_station = to_delete->next_station_info;
+        free(to_delete);
 	}
 
 	//free all clients 
@@ -477,14 +477,15 @@ void convert_binary_addr_to_readable_addr(struct client_info* target){
 
 //a quick function to send invalid command
 void send_invalid_command(int client_sockfd, const char* command_string){
-	int string_length = strlen(command_string);
+	uint8_t string_length = strlen(command_string);
 	int command_size = 2 * sizeof(uint8_t) + string_length;
 	struct InvalidCommand *invalid_command = malloc(command_size);
 	memset(invalid_command, 0, command_size);
 	//format the message
 	uint8_t* command_intpart_pointer = (uint8_t*)invalid_command;
 	command_intpart_pointer[0] = (uint8_t)INVALID_COMMAND;
-	command_intpart_pointer[1] = (uint8_t)string_length;
+	uint16_t string_length_n = htons(string_length);
+        command_intpart_pointer[1] = (uint8_t)string_length;
 	char* command_charpart_pointer = (char*)(((uint8_t*)invalid_command) + 2);
 	memcpy(command_charpart_pointer, command_string, string_length);
 	int bytes_sent = send(client_sockfd,(void*)invalid_command, command_size, 0);
@@ -504,14 +505,15 @@ void send_invalid_command(int client_sockfd, const char* command_string){
 }
 
 int send_announce_command(int client_sockfd, const char* songname){
-	int string_length = strlen(songname);
+	uint8_t string_length = strlen(songname);
 	int command_size = 2 * sizeof(uint8_t) + string_length + 1;
 	struct Announce* announce_command = malloc(command_size);
 	memset(announce_command,0,command_size);
 	uint8_t* command_intpart_pointer = (uint8_t*)announce_command;
 	command_intpart_pointer[0] = (uint8_t)ANNOUNCE;
-	command_intpart_pointer[1] = (uint8_t)string_length + 1;
-	char* command_charpart_pointer = (char*)(((uint8_t*)announce_command) + 2);
+        uint16_t string_length_n = htons(string_length + 1);
+       	command_intpart_pointer[1] = (uint8_t)string_length;
+        char* command_charpart_pointer = (char*)(((uint8_t*)announce_command) + 2);
 	memcpy(command_charpart_pointer, songname, string_length + 1);
 	command_charpart_pointer[string_length] = '\0';
 	int bytes_sent = send(client_sockfd,(void*)announce_command, command_size, 0);
