@@ -484,7 +484,6 @@ void send_invalid_command(int client_sockfd, const char* command_string){
 	//format the message
 	uint8_t* command_intpart_pointer = (uint8_t*)invalid_command;
 	command_intpart_pointer[0] = (uint8_t)INVALID_COMMAND;
-	uint16_t string_length_n = htons(string_length);
         command_intpart_pointer[1] = (uint8_t)string_length;
 	char* command_charpart_pointer = (char*)(((uint8_t*)invalid_command) + 2);
 	memcpy(command_charpart_pointer, command_string, string_length);
@@ -511,7 +510,6 @@ int send_announce_command(int client_sockfd, const char* songname){
 	memset(announce_command,0,command_size);
 	uint8_t* command_intpart_pointer = (uint8_t*)announce_command;
 	command_intpart_pointer[0] = (uint8_t)ANNOUNCE;
-        uint16_t string_length_n = htons(string_length + 1);
        	command_intpart_pointer[1] = (uint8_t)string_length;
         char* command_charpart_pointer = (char*)(((uint8_t*)announce_command) + 2);
 	memcpy(command_charpart_pointer, songname, string_length + 1);
